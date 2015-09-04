@@ -1,0 +1,53 @@
+[
+	{
+		
+	},
+	{
+		"io_cores": { "range": [0, 6] },
+		"rx_queues_to_ports": [
+			{ 
+				"range": [0, 6],
+				"mapped_to": 0,
+				"repeat": {
+					"incr_mapped_from": 7,
+					"incr_mapped_to": 1,
+					"times": 4
+				}
+			}
+		],
+		"rx_queues_to_io_cores": [
+			{ 
+				"array": [0, 7, 14, 21],
+				"mapped_to": 0,
+				"repeat": {
+					"incr_mapped_from": 1,
+					"incr_mapped_to": 1,
+					"times": 7
+				}
+			} 
+		],
+		"io_cores_to_vdevices": [
+			{
+				"range": [0, 6],
+				"mapped_to": 0,
+				"policy": "round-robin"
+			}
+		],
+		"accelerator_threads": [
+			{
+				"core" : 7,
+				"vdevices" : [
+					{
+						"app": "ipv4",
+						"offload_cores": {
+							"range": [0, 1]
+						},
+						"HTs_per_offload_core": 2,
+						"pipeline_depth": 32,
+						"repeat": 1
+					}
+				]
+			}
+		]
+	}
+]

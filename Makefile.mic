@@ -1,0 +1,22 @@
+TARGET = knapp-mic
+OBJS   = utils.cc jsoncpp.cpp knapp-mic.cc $(shell ls apps/*.cc)
+CC       = icpc 
+#CC       = icpc -std=c++11 -mmic -debug all
+CFLAGS   = -std=c++11 -mmic -Wall -fPIC -DVECTORIZE_IPV4#-DEMPTY_CYCLES ##-g #-I/usr/include#-vec-report5 #-opt-streaming-store always #-S
+#CFLAGS   = -O3 -std=c++0x -openmp -vec-report5 #-opt-streaming-store always #-S
+#LDFLAGS  = -lnuma
+#LDFLAGS = -debug all -g
+LDFLAGS = -pthread -lscif -lrt
+
+all: $(TARGET)
+
+$(TARGET): knapp-mic
+	$(CC) $(CFLAGS) $(OBJS) -o $@ $(LDFLAGS) 
+#rm -f $(OBJS)
+
+.cc.o:
+	$(CC) $(CFLAGS) -c $< -o $@
+
+clean:
+	@rm -f $(TARGET) *.o
+

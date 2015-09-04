@@ -1,0 +1,167 @@
+/* 
+	Dryrun app configuration showcasing all syntax features
+
+	All IDs of TX/RX queues, input/completion queues, threads, and cores 
+	in this JSON schema are local to NUMA node that they belong to.
+	Round-robin policy is assumed in cases of one-to-many mappings.
+	We assume that you (the user) cover all IDs as 0-based. 
+	Any missed entries might result in unexpected behavior.
+
+	Many-to-one mappings are straightforward.
+	(IMPORTANT) Many-to-many mappings are 'many-to-many round-robin' by default,
+	but can be 'one-to-one' if the size of the two parts are the same
+	and the user specifies "policy": "one-to-one"
+
+	Author: Junhyun Shim (junhyun@an.kaist.ac.kr)
+	
+	per-NUMA_node configuration schema:
+		{
+			"io_cores": list
+			"rx_queues_to_ports": mapping
+			"rx_queues_to_io_cores": mapping
+			"io_cores_to_input_queues": mapping
+		}
+	'
+	'mapping' semantics: 2 ways to define
+		1) array (1-to-1 mapping): n-th source item is mapped to n-th item in array
+		[2, 4, 6] // source 0 maps to target 2, 1 to 4, and 2 to 6
+
+		2) array of mappings:
+		[
+			// Begin mapping 1
+			{
+				"array": (array of IDs), // for list semantics, see next section
+				"mapped_to": (a 'list' object) // or a single number
+				"policy": "round-robin", // optional. default to round-robin. Alternative: "one-to-one"
+				"repeat": { 
+					// repeat this mapping with # reps, per-field increments described below.
+					"times": 5, 
+					"incr_mapped_from": 1 
+						// increment each element in "array" by 1, or (array of increments for each element)
+					"incr_mapped_to": 1
+				}
+			}, // End of mapping 1
+			// Begin mapping 2
+			... and so on ... (we assume no overlaps among different mappings, so use at your own risk)
+		]
+	'list' semantics:
+		either	{ "array": [(comma-separated list of items)] },
+		or		{ "range": [begin(inclusive), end(inclusive)] }
+	
+*/
+[
+	{
+		
+	},
+	{
+		"io_cores": { "range": [0, 5] }, // Assuming 1 thread per core
+		"rx_queues_to_ports": [
+			/*
+			{ 
+				"range": [0, 5],
+				"mapped_to": 0
+			},
+			{
+				"range": [6, 11],
+				"mapped_to": 1
+			}*/
+			/* Can be just 1 element as follows: */
+				{ 
+					"range": [0, 5],
+					"mapped_to": 0,
+					"repeat": {
+						"incr_mapped_from": [6, 6], // or 6
+						"incr_mapped_to": 1,
+						"times": 2
+					}
+				}
+			/*
+			Or simple but tiresome way would be ...
+			[0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1]
+			*/
+		],
+		"rx_queues_to_io_cores": [
+			{ 
+				"array": [0, 6],
+				"mapped_to": 0,
+				"repeat": {
+					"incr_mapped_from": 1, // or [1, 1]
+					"incr_mapped_to": 1,
+					"times": 6
+				}
+			} // RX queues 0 and 6 pined to I/O thread 0, 1 and 7 pinned to 1 and so on
+		],
+		"io_cores_to_input_queues": [
+			// Use object with "range" attribute to avoid enumerating,
+			// i.e., the alternative to the first mapping below would be 
+			// 0, 0, 0, 0
+			{
+				"range": [0, 3],	// Range of I/O cores where this policy applies (0~3)
+				"mapped_to": 0	// I/O cores 0 ~ 3 feeds input queue 0
+			},
+			{
+				"range": [4, 5],
+				"mapped_to": 1
+			}
+		],
+		"input_queues_to_accelerator_threads": [
+			0, // Input queue 0 feeds accelerator thread 0
+			1  // Input queue 1 feeds accelerator thread 1
+			// Again, the (unnecessary) alternative would be
+			// {
+			//		"range": 0,
+			//		"mapped_to": 0
+			// },
+			// {
+			//		"range": 1,
+			//		"mapped_to": 1
+			// }
+		],
+		"accelerator_threads_to_completion_queues": [
+			{
+				"array": [0],
+				"mapped_to": {
+					"range": [0, 3]
+				}
+			}, 	
+			{
+				"array": [1],
+				"mapped_to": {
+					"range": [4, 5]
+				} // acc.thread 0 feeds completion queues
+			}
+		],
+		"completion_queues_to_io_cores": [
+			{
+				"range": [0, 3],
+				"mapped_to": {
+					"range": [0, 3]
+				},
+				"policy": "one-to-one"
+			},
+			{
+				"range": [4, 5],
+				"mapped_to": {
+					"range": [4, 5]
+				},
+				"policy": "one-to-one"
+			}
+		],
+		"accelerator_threads": [
+			{
+				"cores" : 6,
+				"app": "ipv4",
+				"offload_cores": [0, 7],
+				"HTs_per_offload_core": 2
+			},
+			{
+				"cores" : 7,
+				"source_io_cores" : [4, 5],
+				"dest_io_cores" : [4, 5],
+				"app": "ipsec",
+				"offload_cores": [8, 15],
+				"HTs_per_offload_core": 2
+			}
+		]
+	}
+]
