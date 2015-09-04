@@ -20,387 +20,387 @@ extern int num_bubble_cycles;
 #endif
 
 void *app_ipv4(void *arg) {
-	struct worker *w = (struct worker *) arg;
-	struct vdevice *vdev = w->vdev;
-	int tid = w->thread_id;
-	uint64_t ts_proc_begin, ts_proc_end;
-	uint64_t total_packets_processed = 0;
-	uint64_t total_batches_processed = 0;
-	uint64_t acc_batch_process_us = 0;
-	uint64_t acc_batch_process_us_sq = 0;
-	uint64_t acc_batch_transfer_us = 0;
-	uint64_t acc_batch_transfer_us_sq = 0;
-	uint64_t ts;
-	//log_device(w->vdev->device_id, "Thread %2d pending new task\n", tid);
-	bool once = true;
-	if ( tid == 0 ) {
-		uint64_t volatile *pollring = vdev->poll_ring.ring;
-		while ( w->exit == false ) {
-			w = &vdev->per_thread_work_info[vdev->cur_task_id][tid];
-			int32_t task_id = vdev->cur_task_id;
-			//log_device(vdev->device_id, "Head worker thread initiated %d\n", tid);
-			compiler_fence();
-			while ( pollring[task_id] != KNAPP_TASK_READY ) {
-				insert_pause();
-			}
-			//log_device(vdev->device_id, "Begin processing task %d\n", task_id);
-			if ( (total_batches_processed % VDEV_PROFILE_INTERVAL == 0) || once ) {
-				if ( once ) {
-					ts = ts_proc_begin;
-					once = false;
-				} else {
-					uint64_t new_ts = ts_proc_begin;
-					uint64_t tdiff = new_ts - ts;
-					double mean_proc = (acc_batch_process_us / (double) total_batches_processed);
-					double mean_proc_sq = (acc_batch_process_us_sq / (double) total_batches_processed);
-					double proc_var = mean_proc_sq - (mean_proc * mean_proc);
-					double mean_xfer = (acc_batch_transfer_us / (double) total_batches_processed);
-					double mean_xfer_sq = (acc_batch_transfer_us_sq / (double) total_batches_processed);
-					double xfer_var = mean_xfer_sq - (mean_xfer * mean_xfer);
-					log_device(vdev->device_id, "%llu batches processed at %.2lf Mpps, batch proc time: (%.2lf us, var %.2lf), xfer time: (%.2lf us, var %.2lf)\n",
-							total_batches_processed, total_packets_processed / (double)tdiff, mean_proc, proc_var, mean_xfer, xfer_var);
-					total_batches_processed = 0;
-					total_packets_processed = 0;
-					acc_batch_process_us = 0;
-					acc_batch_process_us_sq = 0;
-					acc_batch_transfer_us = 0;
-					acc_batch_transfer_us_sq = 0;
-					ts = new_ts;
-				}
-			}
-			compiler_fence();
-			pollring[task_id] = KNAPP_COPY_PENDING;
-			ts_proc_begin = knapp_get_usec();
-			w->data_ready_barrier->here(tid);
-			//log_device(vdev->device_id, "Begin processing task %d (%d packets)\n", task_id, w->num_packets);
-			
-			// Shift next task id in advance to avoid data race
-			vdev->cur_task_id = (task_id + 1) % (vdev->poll_ring.len);
-			proc_ipv4(w);
-			//log_device(vdev->device_id, "Finished processing task %d\n", task_id);
-			ts_proc_end = knapp_get_usec();
-			uint64_t batch_proc_us = (ts_proc_end - ts_proc_begin);
-			acc_batch_process_us += batch_proc_us;
-			acc_batch_process_us_sq += (batch_proc_us * batch_proc_us);
-			//log_device(vdev->device_id, "Finished batch (%d pkts)\n", num_packets);
-			int num_packets_in_cur_task = vdev->num_packets_in_cur_task;
-			total_batches_processed++;
-			total_packets_processed += num_packets_in_cur_task;
-			uint8_t *resultbuf_va = bufarray_get_va(&vdev->resultbuf_array, task_id);
-			off_t resultbuf_ra = bufarray_get_ra(&vdev->resultbuf_array, task_id);
-			off_t writeback_ra = bufarray_get_ra_from_index(vdev->remote_writebuf_base_ra, vdev->resultbuf_size, PAGE_SIZE, task_id);
-			compiler_fence();
-			int32_t pktproc_res_size = get_result_size(vdev->workload_type, num_packets_in_cur_task);
-			struct offload_task_tailroom *tailroom = (struct offload_task_tailroom *)(resultbuf_va + pktproc_res_size);
-			tailroom->ts_proc_begin = ts_proc_begin;
-			tailroom->ts_proc_end = ts_proc_end;
-			uint64_t ts_xfer_begin = knapp_get_usec();
-			assert ( 0 == scif_writeto(vdev->data_epd, resultbuf_ra, pktproc_res_size, writeback_ra, 0) );
-			assert ( 0 == scif_fence_signal(vdev->data_epd, 0, 0, vdev->remote_poll_ring_window + sizeof(uint64_t) * task_id, KNAPP_OFFLOAD_COMPLETE, SCIF_FENCE_INIT_SELF | SCIF_SIGNAL_REMOTE) );
-			uint64_t xfer_diff = knapp_get_usec() - ts_xfer_begin;
-			acc_batch_transfer_us += xfer_diff;
-			acc_batch_transfer_us_sq += (xfer_diff * xfer_diff);
-			//log_device(vdev->device_id, "Finished task %d\n", task_id);
-		}
-	} else {
-		while ( w->exit == false ) {
-			int task_id = vdev->cur_task_id;
-			w = &vdev->per_thread_work_info[task_id][tid];
-			//log_device(vdev->device_id, "Thread %2d about to process task %d\n", tid, task_id);
-			w->data_ready_barrier->here(tid);
-			//log_device(vdev->device_id, "Thread %2d data ready for task %d (%d packets)\n", tid, task_id, w->num_packets);
-			proc_ipv4(w);
-			//log_device(vdev->device_id, "Thread %d finished processing task %d\n", tid, task_id);
-		}
-	}
-	return NULL;
+    struct worker *w = (struct worker *) arg;
+    struct vdevice *vdev = w->vdev;
+    int tid = w->thread_id;
+    uint64_t ts_proc_begin, ts_proc_end;
+    uint64_t total_packets_processed = 0;
+    uint64_t total_batches_processed = 0;
+    uint64_t acc_batch_process_us = 0;
+    uint64_t acc_batch_process_us_sq = 0;
+    uint64_t acc_batch_transfer_us = 0;
+    uint64_t acc_batch_transfer_us_sq = 0;
+    uint64_t ts;
+    //log_device(w->vdev->device_id, "Thread %2d pending new task\n", tid);
+    bool once = true;
+    if ( tid == 0 ) {
+        uint64_t volatile *pollring = vdev->poll_ring.ring;
+        while ( w->exit == false ) {
+            w = &vdev->per_thread_work_info[vdev->cur_task_id][tid];
+            int32_t task_id = vdev->cur_task_id;
+            //log_device(vdev->device_id, "Head worker thread initiated %d\n", tid);
+            compiler_fence();
+            while ( pollring[task_id] != KNAPP_TASK_READY ) {
+                insert_pause();
+            }
+            //log_device(vdev->device_id, "Begin processing task %d\n", task_id);
+            if ( (total_batches_processed % VDEV_PROFILE_INTERVAL == 0) || once ) {
+                if ( once ) {
+                    ts = ts_proc_begin;
+                    once = false;
+                } else {
+                    uint64_t new_ts = ts_proc_begin;
+                    uint64_t tdiff = new_ts - ts;
+                    double mean_proc = (acc_batch_process_us / (double) total_batches_processed);
+                    double mean_proc_sq = (acc_batch_process_us_sq / (double) total_batches_processed);
+                    double proc_var = mean_proc_sq - (mean_proc * mean_proc);
+                    double mean_xfer = (acc_batch_transfer_us / (double) total_batches_processed);
+                    double mean_xfer_sq = (acc_batch_transfer_us_sq / (double) total_batches_processed);
+                    double xfer_var = mean_xfer_sq - (mean_xfer * mean_xfer);
+                    log_device(vdev->device_id, "%llu batches processed at %.2lf Mpps, batch proc time: (%.2lf us, var %.2lf), xfer time: (%.2lf us, var %.2lf)\n",
+                            total_batches_processed, total_packets_processed / (double)tdiff, mean_proc, proc_var, mean_xfer, xfer_var);
+                    total_batches_processed = 0;
+                    total_packets_processed = 0;
+                    acc_batch_process_us = 0;
+                    acc_batch_process_us_sq = 0;
+                    acc_batch_transfer_us = 0;
+                    acc_batch_transfer_us_sq = 0;
+                    ts = new_ts;
+                }
+            }
+            compiler_fence();
+            pollring[task_id] = KNAPP_COPY_PENDING;
+            ts_proc_begin = knapp_get_usec();
+            w->data_ready_barrier->here(tid);
+            //log_device(vdev->device_id, "Begin processing task %d (%d packets)\n", task_id, w->num_packets);
+            
+            // Shift next task id in advance to avoid data race
+            vdev->cur_task_id = (task_id + 1) % (vdev->poll_ring.len);
+            proc_ipv4(w);
+            //log_device(vdev->device_id, "Finished processing task %d\n", task_id);
+            ts_proc_end = knapp_get_usec();
+            uint64_t batch_proc_us = (ts_proc_end - ts_proc_begin);
+            acc_batch_process_us += batch_proc_us;
+            acc_batch_process_us_sq += (batch_proc_us * batch_proc_us);
+            //log_device(vdev->device_id, "Finished batch (%d pkts)\n", num_packets);
+            int num_packets_in_cur_task = vdev->num_packets_in_cur_task;
+            total_batches_processed++;
+            total_packets_processed += num_packets_in_cur_task;
+            uint8_t *resultbuf_va = bufarray_get_va(&vdev->resultbuf_array, task_id);
+            off_t resultbuf_ra = bufarray_get_ra(&vdev->resultbuf_array, task_id);
+            off_t writeback_ra = bufarray_get_ra_from_index(vdev->remote_writebuf_base_ra, vdev->resultbuf_size, PAGE_SIZE, task_id);
+            compiler_fence();
+            int32_t pktproc_res_size = get_result_size(vdev->workload_type, num_packets_in_cur_task);
+            struct offload_task_tailroom *tailroom = (struct offload_task_tailroom *)(resultbuf_va + pktproc_res_size);
+            tailroom->ts_proc_begin = ts_proc_begin;
+            tailroom->ts_proc_end = ts_proc_end;
+            uint64_t ts_xfer_begin = knapp_get_usec();
+            assert ( 0 == scif_writeto(vdev->data_epd, resultbuf_ra, pktproc_res_size, writeback_ra, 0) );
+            assert ( 0 == scif_fence_signal(vdev->data_epd, 0, 0, vdev->remote_poll_ring_window + sizeof(uint64_t) * task_id, KNAPP_OFFLOAD_COMPLETE, SCIF_FENCE_INIT_SELF | SCIF_SIGNAL_REMOTE) );
+            uint64_t xfer_diff = knapp_get_usec() - ts_xfer_begin;
+            acc_batch_transfer_us += xfer_diff;
+            acc_batch_transfer_us_sq += (xfer_diff * xfer_diff);
+            //log_device(vdev->device_id, "Finished task %d\n", task_id);
+        }
+    } else {
+        while ( w->exit == false ) {
+            int task_id = vdev->cur_task_id;
+            w = &vdev->per_thread_work_info[task_id][tid];
+            //log_device(vdev->device_id, "Thread %2d about to process task %d\n", tid, task_id);
+            w->data_ready_barrier->here(tid);
+            //log_device(vdev->device_id, "Thread %2d data ready for task %d (%d packets)\n", tid, task_id, w->num_packets);
+            proc_ipv4(w);
+            //log_device(vdev->device_id, "Thread %d finished processing task %d\n", tid, task_id);
+        }
+    }
+    return NULL;
 }
 
 void proc_ipv4(struct worker *w) {
-	int tid = w->thread_id;
-	uint16_t *TBL24_h = w->u.ipv4.TBL24;
-	uint16_t *TBLlong_h = w->u.ipv4.TBLlong;
-	uint32_t sum;
-	//log_worker(tid, "initiated\n");
-	//w->data_ready_barrier->here(tid);
-	//compiler_fence();
+    int tid = w->thread_id;
+    uint16_t *TBL24_h = w->u.ipv4.TBL24;
+    uint16_t *TBLlong_h = w->u.ipv4.TBLlong;
+    uint32_t sum;
+    //log_worker(tid, "initiated\n");
+    //w->data_ready_barrier->here(tid);
+    //compiler_fence();
 
 #ifdef EMPTY_CYCLES
-	/*
-	memset(w->outputbuf, 0, w->num_packets * sizeof(int32_t));
-	int x = num_bubble_cycles / 2;
-	asm("1:decl %0;\n\t"
-	   "jnz 1b;\n\t"
-	   : "=r"(x)// Nope
-	   : "r"(x)
+    /*
+    memset(w->outputbuf, 0, w->num_packets * sizeof(int32_t));
+    int x = num_bubble_cycles / 2;
+    asm("1:decl %0;\n\t"
+       "jnz 1b;\n\t"
+       : "=r"(x)// Nope
+       : "r"(x)
    );
-	*/
-	int x = num_bubble_cycles;
-	while ( x-- )
-		asm("");
+    */
+    int x = num_bubble_cycles;
+    while ( x-- )
+        asm("");
 #else
 #ifndef VECTORIZE_IPV4
-	for (uint32_t ipacket = 0; ipacket < w->num_packets; ipacket++) {
-		//int rc = process_ipv4(w->buf + (ipacket * w->stride));
-		pktprocess_result_t result = CONTINUE;
-		uint8_t *inputbuf = w->inputbuf + (ipacket * w->input_stride);
-		struct ether_hdr *ethh = (struct ether_hdr *) inputbuf;
-		struct iphdr *iph = (struct iphdr *)(((uint8_t *)(struct iphdr *)(ethh + 1)) + 2);
-		uint32_t ip = ntohl(iph->daddr);
-		uint16_t lookup_result = 0xffff;
-		uint16_t temp_dest;
+    for (uint32_t ipacket = 0; ipacket < w->num_packets; ipacket++) {
+        //int rc = process_ipv4(w->buf + (ipacket * w->stride));
+        pktprocess_result_t result = CONTINUE;
+        uint8_t *inputbuf = w->inputbuf + (ipacket * w->input_stride);
+        struct ether_hdr *ethh = (struct ether_hdr *) inputbuf;
+        struct iphdr *iph = (struct iphdr *)(((uint8_t *)(struct iphdr *)(ethh + 1)) + 2);
+        uint32_t ip = ntohl(iph->daddr);
+        uint16_t lookup_result = 0xffff;
+        uint16_t temp_dest;
 
-		// Non-unicast filter
-		if ( !is_unicast_ether_addr(&ethh->d_addr)) {
-			result = DROP;
-			goto write_result;
-		}
+        // Non-unicast filter
+        if ( !is_unicast_ether_addr(&ethh->d_addr)) {
+            result = DROP;
+            goto write_result;
+        }
 
-		// CheckIPHeader
-		if (ntohs(ethh->ether_type) != ETHER_TYPE_IPv4) {
-			//RTE_LOG(DEBUG, ELEM, "CheckIPHeader: invalid packet type - %x\n", ntohs(ethh->ether_type));
-			result = DROP;
-			goto write_result;
-		}
+        // CheckIPHeader
+        if (ntohs(ethh->ether_type) != ETHER_TYPE_IPv4) {
+            //RTE_LOG(DEBUG, ELEM, "CheckIPHeader: invalid packet type - %x\n", ntohs(ethh->ether_type));
+            result = DROP;
+            goto write_result;
+        }
 
-		if ( (iph->version != 4) || (iph->ihl < 5) ) {
-			//RTE_LOG(DEBUG, ELEM, "CheckIPHeader: invalid packet - ver %d, ihl %d\n", iph->version, iph->ihl);
-			result = SLOWPATH;
-			goto write_result;
-		}
+        if ( (iph->version != 4) || (iph->ihl < 5) ) {
+            //RTE_LOG(DEBUG, ELEM, "CheckIPHeader: invalid packet - ver %d, ihl %d\n", iph->version, iph->ihl);
+            result = SLOWPATH;
+            goto write_result;
+        }
 
-		if ( (iph->ihl * 4) > ntohs(iph->tot_len)) {
-			//RTE_LOG(DEBUG, ELEM, "CheckIPHeader: invalid packet - total len %d, ihl %d\n", iph->tot_len, iph->ihl);
-			result = SLOWPATH;
-			goto write_result;
-		}
+        if ( (iph->ihl * 4) > ntohs(iph->tot_len)) {
+            //RTE_LOG(DEBUG, ELEM, "CheckIPHeader: invalid packet - total len %d, ihl %d\n", iph->tot_len, iph->ihl);
+            result = SLOWPATH;
+            goto write_result;
+        }
 
-		if (ip_fast_csum(iph, iph->ihl) != 0) {
-			result = DROP;
-			goto write_result;
-		}
-		
-		// IPlookup
-		temp_dest = TBL24_h[ip >> 8];
+        if (ip_fast_csum(iph, iph->ihl) != 0) {
+            result = DROP;
+            goto write_result;
+        }
+        
+        // IPlookup
+        temp_dest = TBL24_h[ip >> 8];
 
-		if (temp_dest & 0x8000u) {
-			int index2 = (((uint32_t)(temp_dest & 0x7fff)) << 8) + (ip & 0xff);
-			temp_dest = TBLlong_h[index2];
-		}
-		lookup_result = temp_dest;
-		if (lookup_result == 0xffff) {
-			/* Could not find destination. Use the second output for "error" packets. */
-			result = DROP;
-			goto write_result;
-		}
+        if (temp_dest & 0x8000u) {
+            int index2 = (((uint32_t)(temp_dest & 0x7fff)) << 8) + (ip & 0xff);
+            temp_dest = TBLlong_h[index2];
+        }
+        lookup_result = temp_dest;
+        if (lookup_result == 0xffff) {
+            /* Could not find destination. Use the second output for "error" packets. */
+            result = DROP;
+            goto write_result;
+        }
 
-		// DecIPTTL
-		if (iph->ttl <= 1) {
-			result = DROP;
-			goto write_result;
-		}
-		iph->ttl--;
-		sum = (~ntohs(iph->check) & 0xFFFF) + 0xFEFF;
-		iph->check = ~htons(sum + (sum >> 16));
-		result = CONTINUE;
+        // DecIPTTL
+        if (iph->ttl <= 1) {
+            result = DROP;
+            goto write_result;
+        }
+        iph->ttl--;
+        sum = (~ntohs(iph->check) & 0xFFFF) + 0xFEFF;
+        iph->check = ~htons(sum + (sum >> 16));
+        result = CONTINUE;
 write_result:
-		*((int32_t *)(w->outputbuf + (PER_PACKET_RESULT_SIZE_IPV4 * ipacket))) = result;
-	}
+        *((int32_t *)(w->outputbuf + (PER_PACKET_RESULT_SIZE_IPV4 * ipacket))) = result;
+    }
 #else
-	int payload_stride = w->input_stride;
-	int num_packets = w->num_packets;
-	uint8_t *inputbuf_base = w->inputbuf;
-	uint8_t *outputbuf_base = w->outputbuf;
-	int ip_base_offset = sizeof(struct ether_hdr) + 2;
-	int ip_version_offset = ip_base_offset;
-	int ip_ttl_offset = ip_base_offset + offsetof(struct iphdr, ttl);
-	int ip_tot_len_offset = ip_base_offset + offsetof(struct iphdr, tot_len);
-	int ip_daddr_offset = ip_base_offset + offsetof(struct iphdr, daddr);
-	int ip_csum_offset = ip_base_offset + offsetof(struct iphdr, check);
-	__m512i v_zero = _mm512_setzero_epi32 ();
-	__m512i v_one = _mm512_set_epi32 (REPEAT_16(1));
-	__m512i v_firstbyte_offset = _mm512_set_epi32(REPEAT_16_WITH_STRIDE(0, payload_stride));
-	__m512i v_ethertype_ipv4 = _mm512_set_epi32 (REPEAT_16(ETHER_TYPE_IPv4_LE));
-	__m512i v_ip_version_offset = _mm512_set_epi32(REPEAT_16_WITH_STRIDE(ip_version_offset, payload_stride));
-	__m512i v_ip_base_offset = _mm512_set_epi32(REPEAT_16_WITH_STRIDE(ip_base_offset, payload_stride));
-	__m512i v_ip_ttl_offset = _mm512_set_epi32(REPEAT_16_WITH_STRIDE(ip_ttl_offset, payload_stride));
-	__m512i v_ip_tot_len_offset = _mm512_set_epi32(REPEAT_16_WITH_STRIDE(ip_tot_len_offset, payload_stride));
-	__m512i v_ethertype_offset = _mm512_set_epi32(REPEAT_16_WITH_STRIDE((ETHER_ADDR_LEN * 2), payload_stride));
-	__m512i v_ip_daddr_offset = _mm512_set_epi32(REPEAT_16_WITH_STRIDE(ip_daddr_offset, payload_stride));
-	__m512i v_low_4bit_mask = _mm512_set_epi32(REPEAT_16(15));
-	__m512i v_low_16bit_mask = _mm512_set_epi32(REPEAT_16(0xffff));
-	__m512i v_four = _mm512_set_epi32(REPEAT_16(4));
-	__m512i v_five = _mm512_set_epi32(REPEAT_16(5));
-	__m512i v_ignored_ip = _mm512_set_epi32 (REPEAT_16(IGNORED_IP));
-	__m512i	v_0x8000 = _mm512_set_epi32 (REPEAT_16(0x8000));
-	__m512i	v_0x7fff = _mm512_set_epi32 (REPEAT_16(0x7fff));
-	__m512i	v_0xfeff = _mm512_set_epi32 (REPEAT_16(0xfeff));
-	__m512i	v_0xff = _mm512_set_epi32 (REPEAT_16(0xff));
-	__m512i v_top1B_mask = _mm512_set1_epi32(0xff000000);
-	__m512i v_top2B_mask = _mm512_set1_epi32(0x00ff0000);
-	__m512i v_top3B_mask = _mm512_set1_epi32(0x0000ff00);
-	__m512i v_top4B_mask = _mm512_set1_epi32(0x000000ff);
-	__m512i v_ip_csum_offset = _mm512_set_epi32(REPEAT_16_WITH_STRIDE(ip_csum_offset, payload_stride));
+    int payload_stride = w->input_stride;
+    int num_packets = w->num_packets;
+    uint8_t *inputbuf_base = w->inputbuf;
+    uint8_t *outputbuf_base = w->outputbuf;
+    int ip_base_offset = sizeof(struct ether_hdr) + 2;
+    int ip_version_offset = ip_base_offset;
+    int ip_ttl_offset = ip_base_offset + offsetof(struct iphdr, ttl);
+    int ip_tot_len_offset = ip_base_offset + offsetof(struct iphdr, tot_len);
+    int ip_daddr_offset = ip_base_offset + offsetof(struct iphdr, daddr);
+    int ip_csum_offset = ip_base_offset + offsetof(struct iphdr, check);
+    __m512i v_zero = _mm512_setzero_epi32 ();
+    __m512i v_one = _mm512_set_epi32 (REPEAT_16(1));
+    __m512i v_firstbyte_offset = _mm512_set_epi32(REPEAT_16_WITH_STRIDE(0, payload_stride));
+    __m512i v_ethertype_ipv4 = _mm512_set_epi32 (REPEAT_16(ETHER_TYPE_IPv4_LE));
+    __m512i v_ip_version_offset = _mm512_set_epi32(REPEAT_16_WITH_STRIDE(ip_version_offset, payload_stride));
+    __m512i v_ip_base_offset = _mm512_set_epi32(REPEAT_16_WITH_STRIDE(ip_base_offset, payload_stride));
+    __m512i v_ip_ttl_offset = _mm512_set_epi32(REPEAT_16_WITH_STRIDE(ip_ttl_offset, payload_stride));
+    __m512i v_ip_tot_len_offset = _mm512_set_epi32(REPEAT_16_WITH_STRIDE(ip_tot_len_offset, payload_stride));
+    __m512i v_ethertype_offset = _mm512_set_epi32(REPEAT_16_WITH_STRIDE((ETHER_ADDR_LEN * 2), payload_stride));
+    __m512i v_ip_daddr_offset = _mm512_set_epi32(REPEAT_16_WITH_STRIDE(ip_daddr_offset, payload_stride));
+    __m512i v_low_4bit_mask = _mm512_set_epi32(REPEAT_16(15));
+    __m512i v_low_16bit_mask = _mm512_set_epi32(REPEAT_16(0xffff));
+    __m512i v_four = _mm512_set_epi32(REPEAT_16(4));
+    __m512i v_five = _mm512_set_epi32(REPEAT_16(5));
+    __m512i v_ignored_ip = _mm512_set_epi32 (REPEAT_16(IGNORED_IP));
+    __m512i    v_0x8000 = _mm512_set_epi32 (REPEAT_16(0x8000));
+    __m512i    v_0x7fff = _mm512_set_epi32 (REPEAT_16(0x7fff));
+    __m512i    v_0xfeff = _mm512_set_epi32 (REPEAT_16(0xfeff));
+    __m512i    v_0xff = _mm512_set_epi32 (REPEAT_16(0xff));
+    __m512i v_top1B_mask = _mm512_set1_epi32(0xff000000);
+    __m512i v_top2B_mask = _mm512_set1_epi32(0x00ff0000);
+    __m512i v_top3B_mask = _mm512_set1_epi32(0x0000ff00);
+    __m512i v_top4B_mask = _mm512_set1_epi32(0x000000ff);
+    __m512i v_ip_csum_offset = _mm512_set_epi32(REPEAT_16_WITH_STRIDE(ip_csum_offset, payload_stride));
 
-	__m512i v_drop = _mm512_set1_epi32(DROP);
-	__m512i v_slowpath = _mm512_set1_epi32(SLOWPATH);
-	__m512i v_continue = _mm512_set1_epi32(CONTINUE);
+    __m512i v_drop = _mm512_set1_epi32(DROP);
+    __m512i v_slowpath = _mm512_set1_epi32(SLOWPATH);
+    __m512i v_continue = _mm512_set1_epi32(CONTINUE);
 
-	for (int ipacket = 0; ipacket < num_packets; ipacket += NUM_INT32_PER_VECTOR) {
-		int to_process = MIN(NUM_INT32_PER_VECTOR, num_packets - ipacket);
-		uint8_t *inputbuf = inputbuf_base + (ipacket * payload_stride);
-		uint8_t *outputbuf = outputbuf_base + (ipacket * PER_PACKET_RESULT_SIZE_IPV4);
-		
-		// mask for when [# elements != NUM_INT32_PER_VECTOR] in the last iteration
-		__mmask16 m_within_range = _mm512_int2mask( (1 << to_process) - 1 );
-		//printmask(m_within_range);
-		__m512i v_ether_firstbyte = _mm512_mask_i32extgather_epi32 (v_zero, m_within_range, v_firstbyte_offset, inputbuf, _MM_UPCONV_EPI32_UINT8, 1, _MM_HINT_NT);
-		//printvec(v_ether_firstbyte);
-		__m512i v_unicast_check = _mm512_mask_and_epi32(v_zero, m_within_range, v_ether_firstbyte, v_one);
-		//printvec(v_unicast_check);
-		__mmask16 m_is_unicast = _mm512_mask_cmp_epi32_mask(m_within_range, v_unicast_check, v_zero, _MM_CMPINT_EQ); // m_is_unicast also filters out vector elements not subject to processing because ipacket > num_packets
-		//printmask(m_is_unicast);
-		__m512i v_ethertype = _mm512_mask_i32extgather_epi32 (v_zero, m_is_unicast, v_ethertype_offset, inputbuf, _MM_UPCONV_EPI32_UINT16, 1, _MM_HINT_NT);
-		//printvec(v_ethertype);
-		// No need for ntohs since both host and device is big-endian
-		__mmask16 m_is_ipv4 = _mm512_mask_cmp_epi32_mask(m_is_unicast, v_ethertype_ipv4, v_ethertype, _MM_CMPINT_EQ);
-		//printmask(m_is_ipv4);
-		// version/ihl account for upper/lower order 4 bits of a byte
-		__m512i v_ip_version_and_ihl = _mm512_mask_i32extgather_epi32 (v_zero, m_is_ipv4, v_ip_version_offset, inputbuf, _MM_UPCONV_EPI32_UINT8, 1, _MM_HINT_NT);
-		//printvec(v_ip_version_and_ihl);
-		__m512i v_tot_len_n = _mm512_mask_i32extgather_epi32 (v_zero, m_is_ipv4, v_ip_tot_len_offset, inputbuf, _MM_UPCONV_EPI32_UINT16, 1, _MM_HINT_NT);
-		__m512i v_tot_len = _mm512_mask_or_epi32(v_zero, m_is_ipv4, 
-								_mm512_mask_and_epi32(v_zero, m_is_ipv4, v_top4B_mask, _mm512_mask_srli_epi32(v_zero, m_is_ipv4, v_tot_len_n, 8)),
-								_mm512_mask_and_epi32(v_zero, m_is_ipv4, v_top3B_mask, _mm512_mask_slli_epi32(v_zero, m_is_ipv4, v_tot_len_n, 8)));
-		//printvec(v_tot_len);
-		__m512i v_ip_version = _mm512_mask_srli_epi32(v_zero, m_is_ipv4, v_ip_version_and_ihl, 4);
-		//printvec(v_ip_version);
-		__m512i v_ip_ihl = _mm512_mask_and_epi32(v_zero, m_is_ipv4, v_low_4bit_mask, v_ip_version_and_ihl);
-		//printvec(v_ip_ihl);
-		// (ip_version != 4 or ip_ihl < 5) -> slowpath
-		__mmask16 m_ip_version_eq_4 = _mm512_mask_cmp_epi32_mask(m_is_ipv4, v_ip_version, v_four, _MM_CMPINT_EQ);
-		//printmask(m_ip_version_eq_4);
-		__mmask16 m_ip_version_ne_4 = _mm512_mask_cmp_epi32_mask(m_is_ipv4, v_ip_version, v_four, _MM_CMPINT_NE);
-		//printmask(m_ip_version_ne_4);
-		__mmask16 m_ihl_lt_5 = _mm512_mask_cmp_epi32_mask(m_is_ipv4, v_ip_ihl, v_five, _MM_CMPINT_LT);
-		//printmask(m_ihl_lt_5);
-		__mmask16 m_ihl_ge_5 = _mm512_mask_cmp_epi32_mask(m_is_ipv4, v_ip_ihl, v_five, _MM_CMPINT_GE);
-		//printmask(m_ihl_ge_5);
+    for (int ipacket = 0; ipacket < num_packets; ipacket += NUM_INT32_PER_VECTOR) {
+        int to_process = MIN(NUM_INT32_PER_VECTOR, num_packets - ipacket);
+        uint8_t *inputbuf = inputbuf_base + (ipacket * payload_stride);
+        uint8_t *outputbuf = outputbuf_base + (ipacket * PER_PACKET_RESULT_SIZE_IPV4);
+        
+        // mask for when [# elements != NUM_INT32_PER_VECTOR] in the last iteration
+        __mmask16 m_within_range = _mm512_int2mask( (1 << to_process) - 1 );
+        //printmask(m_within_range);
+        __m512i v_ether_firstbyte = _mm512_mask_i32extgather_epi32 (v_zero, m_within_range, v_firstbyte_offset, inputbuf, _MM_UPCONV_EPI32_UINT8, 1, _MM_HINT_NT);
+        //printvec(v_ether_firstbyte);
+        __m512i v_unicast_check = _mm512_mask_and_epi32(v_zero, m_within_range, v_ether_firstbyte, v_one);
+        //printvec(v_unicast_check);
+        __mmask16 m_is_unicast = _mm512_mask_cmp_epi32_mask(m_within_range, v_unicast_check, v_zero, _MM_CMPINT_EQ); // m_is_unicast also filters out vector elements not subject to processing because ipacket > num_packets
+        //printmask(m_is_unicast);
+        __m512i v_ethertype = _mm512_mask_i32extgather_epi32 (v_zero, m_is_unicast, v_ethertype_offset, inputbuf, _MM_UPCONV_EPI32_UINT16, 1, _MM_HINT_NT);
+        //printvec(v_ethertype);
+        // No need for ntohs since both host and device is big-endian
+        __mmask16 m_is_ipv4 = _mm512_mask_cmp_epi32_mask(m_is_unicast, v_ethertype_ipv4, v_ethertype, _MM_CMPINT_EQ);
+        //printmask(m_is_ipv4);
+        // version/ihl account for upper/lower order 4 bits of a byte
+        __m512i v_ip_version_and_ihl = _mm512_mask_i32extgather_epi32 (v_zero, m_is_ipv4, v_ip_version_offset, inputbuf, _MM_UPCONV_EPI32_UINT8, 1, _MM_HINT_NT);
+        //printvec(v_ip_version_and_ihl);
+        __m512i v_tot_len_n = _mm512_mask_i32extgather_epi32 (v_zero, m_is_ipv4, v_ip_tot_len_offset, inputbuf, _MM_UPCONV_EPI32_UINT16, 1, _MM_HINT_NT);
+        __m512i v_tot_len = _mm512_mask_or_epi32(v_zero, m_is_ipv4, 
+                                _mm512_mask_and_epi32(v_zero, m_is_ipv4, v_top4B_mask, _mm512_mask_srli_epi32(v_zero, m_is_ipv4, v_tot_len_n, 8)),
+                                _mm512_mask_and_epi32(v_zero, m_is_ipv4, v_top3B_mask, _mm512_mask_slli_epi32(v_zero, m_is_ipv4, v_tot_len_n, 8)));
+        //printvec(v_tot_len);
+        __m512i v_ip_version = _mm512_mask_srli_epi32(v_zero, m_is_ipv4, v_ip_version_and_ihl, 4);
+        //printvec(v_ip_version);
+        __m512i v_ip_ihl = _mm512_mask_and_epi32(v_zero, m_is_ipv4, v_low_4bit_mask, v_ip_version_and_ihl);
+        //printvec(v_ip_ihl);
+        // (ip_version != 4 or ip_ihl < 5) -> slowpath
+        __mmask16 m_ip_version_eq_4 = _mm512_mask_cmp_epi32_mask(m_is_ipv4, v_ip_version, v_four, _MM_CMPINT_EQ);
+        //printmask(m_ip_version_eq_4);
+        __mmask16 m_ip_version_ne_4 = _mm512_mask_cmp_epi32_mask(m_is_ipv4, v_ip_version, v_four, _MM_CMPINT_NE);
+        //printmask(m_ip_version_ne_4);
+        __mmask16 m_ihl_lt_5 = _mm512_mask_cmp_epi32_mask(m_is_ipv4, v_ip_ihl, v_five, _MM_CMPINT_LT);
+        //printmask(m_ihl_lt_5);
+        __mmask16 m_ihl_ge_5 = _mm512_mask_cmp_epi32_mask(m_is_ipv4, v_ip_ihl, v_five, _MM_CMPINT_GE);
+        //printmask(m_ihl_ge_5);
 
-		__mmask16 m_valid_so_far = _mm512_kand(m_ip_version_eq_4, m_ihl_ge_5);
-		//printmask(m_valid_so_far);
+        __mmask16 m_valid_so_far = _mm512_kand(m_ip_version_eq_4, m_ihl_ge_5);
+        //printmask(m_valid_so_far);
 
-		__m512i v_4x_ihl = _mm512_mask_slli_epi32(v_zero, m_valid_so_far, v_ip_ihl, 2);
-		//printvec(v_4x_ihl);
-		__mmask16 m_4x_ihl_gt_tot_len = _mm512_mask_cmp_epi32_mask(m_valid_so_far, v_4x_ihl, v_tot_len, _MM_CMPINT_GT);
-		//printmask(m_4x_ihl_gt_tot_len);
-		__mmask16 m_4x_ihl_le_tot_len = _mm512_mask_cmp_epi32_mask(m_valid_so_far, v_4x_ihl, v_tot_len, _MM_CMPINT_LE);
-		//printmask(m_4x_ihl_le_tot_len);
-		__mmask16 m_is_slowpath = _mm512_kor(_mm512_kor(m_ip_version_ne_4, m_ihl_lt_5), m_4x_ihl_gt_tot_len);
-		//printmask(m_is_slowpath);
-		m_valid_so_far = _mm512_kand(m_valid_so_far, m_4x_ihl_le_tot_len);
-		//printmask(m_valid_so_far);
-		
-		// Begin IP_FAST_CSUM in vectorized form
-		{
-			__mmask16 m_carry_src = _mm512_int2mask(0);
-			__mmask16 m_carry_dst = _mm512_int2mask(0);
-			//printvec(v_ip_base_offset);
-			__m512i v_0l = _mm512_mask_i32extgather_epi32 (v_zero, m_valid_so_far, v_ip_base_offset, inputbuf, _MM_UPCONV_EPI32_NONE, 1, _MM_HINT_NT);
-			//printvec(v_0l);
-			__m512i v_1l = _mm512_mask_i32extgather_epi32 (v_zero, m_valid_so_far, _mm512_add_epi32(v_ip_base_offset, _mm512_set1_epi32(4)), inputbuf, _MM_UPCONV_EPI32_NONE, 1, _MM_HINT_NT);
-			//printvec(v_1l);
-			__m512i v_2l = _mm512_mask_i32extgather_epi32 (v_zero, m_valid_so_far, _mm512_add_epi32(v_ip_base_offset, _mm512_set1_epi32(8)), inputbuf, _MM_UPCONV_EPI32_NONE, 1, _MM_HINT_NT);
-			//printvec(v_2l);
-			__m512i v_3l = _mm512_mask_i32extgather_epi32 (v_zero, m_valid_so_far, _mm512_add_epi32(v_ip_base_offset, _mm512_set1_epi32(12)), inputbuf, _MM_UPCONV_EPI32_NONE, 1, _MM_HINT_NT);
-			//printvec(v_3l);
-			__m512i v_4l = _mm512_mask_i32extgather_epi32 (v_zero, m_valid_so_far, _mm512_add_epi32(v_ip_base_offset, _mm512_set1_epi32(16)), inputbuf, _MM_UPCONV_EPI32_NONE, 1, _MM_HINT_NT);
-			//printvec(v_4l);
-			//FIXME: Handle cases where IHL > 5
-			__m512i v_sum = _mm512_mask_adc_epi32 (v_0l, m_valid_so_far, m_carry_src, v_1l, &m_carry_dst);
-			m_carry_src = m_carry_dst;
-					v_sum = _mm512_mask_adc_epi32 (v_sum, m_valid_so_far, m_carry_src, v_2l, &m_carry_dst);
-			m_carry_src = m_carry_dst;
-					v_sum = _mm512_mask_adc_epi32 (v_sum, m_valid_so_far, m_carry_src, v_3l, &m_carry_dst);
-			m_carry_src = m_carry_dst;
-					v_sum = _mm512_mask_adc_epi32 (v_sum, m_valid_so_far, m_carry_src, v_4l, &m_carry_dst);
-			m_carry_src = m_carry_dst;
-					v_sum = _mm512_mask_adc_epi32 (v_sum, m_valid_so_far, m_carry_src, v_zero, &m_carry_dst);
-			__m512i v_sum_upper16b = _mm512_mask_srli_epi32(v_zero, m_valid_so_far, v_sum, 16);
-			__m512i v_sum_lower16b = _mm512_mask_and_epi32(v_zero, m_valid_so_far, v_sum, v_low_16bit_mask);
-			__m512i v_sum_interm = _mm512_mask_add_epi32(v_zero, m_valid_so_far, v_sum_upper16b, v_sum_lower16b);
-			__m512i v_final_carry = _mm512_mask_srli_epi32(v_zero, m_valid_so_far, v_sum_interm, 16);
-			v_sum_interm = _mm512_mask_and_epi32(v_zero, m_valid_so_far, v_sum_interm, v_low_16bit_mask);
-			__m512i v_sum_final = _mm512_mask_add_epi32(v_zero, m_valid_so_far, v_sum_interm, v_final_carry);
-			v_sum_final = _mm512_mask_and_epi32(v_zero, m_valid_so_far, v_sum_final, v_low_16bit_mask);
-			v_sum_final = _mm512_mask_and_epi32(v_zero, m_valid_so_far, _mm512_mask_andnot_epi32(v_zero, m_valid_so_far, v_sum_final, v_sum_final), v_low_16bit_mask);
-			//printvec(v_sum_final);
-			__mmask16 m_checksum_zero = _mm512_mask_cmp_epi32_mask(m_valid_so_far, v_sum_final, v_zero, _MM_CMPINT_EQ);
+        __m512i v_4x_ihl = _mm512_mask_slli_epi32(v_zero, m_valid_so_far, v_ip_ihl, 2);
+        //printvec(v_4x_ihl);
+        __mmask16 m_4x_ihl_gt_tot_len = _mm512_mask_cmp_epi32_mask(m_valid_so_far, v_4x_ihl, v_tot_len, _MM_CMPINT_GT);
+        //printmask(m_4x_ihl_gt_tot_len);
+        __mmask16 m_4x_ihl_le_tot_len = _mm512_mask_cmp_epi32_mask(m_valid_so_far, v_4x_ihl, v_tot_len, _MM_CMPINT_LE);
+        //printmask(m_4x_ihl_le_tot_len);
+        __mmask16 m_is_slowpath = _mm512_kor(_mm512_kor(m_ip_version_ne_4, m_ihl_lt_5), m_4x_ihl_gt_tot_len);
+        //printmask(m_is_slowpath);
+        m_valid_so_far = _mm512_kand(m_valid_so_far, m_4x_ihl_le_tot_len);
+        //printmask(m_valid_so_far);
+        
+        // Begin IP_FAST_CSUM in vectorized form
+        {
+            __mmask16 m_carry_src = _mm512_int2mask(0);
+            __mmask16 m_carry_dst = _mm512_int2mask(0);
+            //printvec(v_ip_base_offset);
+            __m512i v_0l = _mm512_mask_i32extgather_epi32 (v_zero, m_valid_so_far, v_ip_base_offset, inputbuf, _MM_UPCONV_EPI32_NONE, 1, _MM_HINT_NT);
+            //printvec(v_0l);
+            __m512i v_1l = _mm512_mask_i32extgather_epi32 (v_zero, m_valid_so_far, _mm512_add_epi32(v_ip_base_offset, _mm512_set1_epi32(4)), inputbuf, _MM_UPCONV_EPI32_NONE, 1, _MM_HINT_NT);
+            //printvec(v_1l);
+            __m512i v_2l = _mm512_mask_i32extgather_epi32 (v_zero, m_valid_so_far, _mm512_add_epi32(v_ip_base_offset, _mm512_set1_epi32(8)), inputbuf, _MM_UPCONV_EPI32_NONE, 1, _MM_HINT_NT);
+            //printvec(v_2l);
+            __m512i v_3l = _mm512_mask_i32extgather_epi32 (v_zero, m_valid_so_far, _mm512_add_epi32(v_ip_base_offset, _mm512_set1_epi32(12)), inputbuf, _MM_UPCONV_EPI32_NONE, 1, _MM_HINT_NT);
+            //printvec(v_3l);
+            __m512i v_4l = _mm512_mask_i32extgather_epi32 (v_zero, m_valid_so_far, _mm512_add_epi32(v_ip_base_offset, _mm512_set1_epi32(16)), inputbuf, _MM_UPCONV_EPI32_NONE, 1, _MM_HINT_NT);
+            //printvec(v_4l);
+            //FIXME: Handle cases where IHL > 5
+            __m512i v_sum = _mm512_mask_adc_epi32 (v_0l, m_valid_so_far, m_carry_src, v_1l, &m_carry_dst);
+            m_carry_src = m_carry_dst;
+                    v_sum = _mm512_mask_adc_epi32 (v_sum, m_valid_so_far, m_carry_src, v_2l, &m_carry_dst);
+            m_carry_src = m_carry_dst;
+                    v_sum = _mm512_mask_adc_epi32 (v_sum, m_valid_so_far, m_carry_src, v_3l, &m_carry_dst);
+            m_carry_src = m_carry_dst;
+                    v_sum = _mm512_mask_adc_epi32 (v_sum, m_valid_so_far, m_carry_src, v_4l, &m_carry_dst);
+            m_carry_src = m_carry_dst;
+                    v_sum = _mm512_mask_adc_epi32 (v_sum, m_valid_so_far, m_carry_src, v_zero, &m_carry_dst);
+            __m512i v_sum_upper16b = _mm512_mask_srli_epi32(v_zero, m_valid_so_far, v_sum, 16);
+            __m512i v_sum_lower16b = _mm512_mask_and_epi32(v_zero, m_valid_so_far, v_sum, v_low_16bit_mask);
+            __m512i v_sum_interm = _mm512_mask_add_epi32(v_zero, m_valid_so_far, v_sum_upper16b, v_sum_lower16b);
+            __m512i v_final_carry = _mm512_mask_srli_epi32(v_zero, m_valid_so_far, v_sum_interm, 16);
+            v_sum_interm = _mm512_mask_and_epi32(v_zero, m_valid_so_far, v_sum_interm, v_low_16bit_mask);
+            __m512i v_sum_final = _mm512_mask_add_epi32(v_zero, m_valid_so_far, v_sum_interm, v_final_carry);
+            v_sum_final = _mm512_mask_and_epi32(v_zero, m_valid_so_far, v_sum_final, v_low_16bit_mask);
+            v_sum_final = _mm512_mask_and_epi32(v_zero, m_valid_so_far, _mm512_mask_andnot_epi32(v_zero, m_valid_so_far, v_sum_final, v_sum_final), v_low_16bit_mask);
+            //printvec(v_sum_final);
+            __mmask16 m_checksum_zero = _mm512_mask_cmp_epi32_mask(m_valid_so_far, v_sum_final, v_zero, _MM_CMPINT_EQ);
 
-			m_valid_so_far = _mm512_kand(m_valid_so_far, m_checksum_zero);
-		}
-		// FINISH LOOKUP, DECTTL, UPDATE CHECKSUM AND WHATNOT
-		{
-			// BEGIN LOOKUP
-			__m512i v_daddr_n = _mm512_mask_i32extgather_epi32 (v_zero, m_valid_so_far, v_ip_daddr_offset, inputbuf, _MM_UPCONV_EPI32_NONE, 1, _MM_HINT_NT);
-			__m512i v_daddr_top1B_h = _mm512_mask_slli_epi32(v_zero, m_valid_so_far, v_daddr_n, 24);
-			__m512i v_daddr_top2B_h = _mm512_mask_and_epi32(v_zero, m_valid_so_far, v_top2B_mask, _mm512_mask_slli_epi32(v_zero, m_valid_so_far, v_daddr_n, 8));
-			__m512i v_daddr_top3B_h = _mm512_mask_and_epi32(v_zero, m_valid_so_far, v_top3B_mask, _mm512_mask_srli_epi32(v_zero, m_valid_so_far, v_daddr_n, 8));
-			__m512i v_daddr_top4B_h = _mm512_mask_and_epi32(v_zero, m_valid_so_far, v_top4B_mask, _mm512_mask_srli_epi32(v_zero, m_valid_so_far, v_daddr_n, 24));
-			__m512i v_daddr = _mm512_mask_or_epi32(v_zero, m_valid_so_far, _mm512_mask_or_epi32(v_zero, m_valid_so_far, v_daddr_top1B_h, v_daddr_top2B_h), _mm512_mask_or_epi32(v_zero, m_valid_so_far, v_daddr_top3B_h, v_daddr_top4B_h));
-			//printvec(v_daddr);
-			__m512i v_daddr_shift8 = _mm512_mask_srli_epi32(v_daddr, m_valid_so_far, v_daddr, 8);
-			__mmask16 m_is_not_ignored = _mm512_mask_cmp_epu32_mask (m_valid_so_far, v_daddr, v_ignored_ip, _MM_CMPINT_NE);
-			__m512i v_temp_dest = _mm512_mask_i32extgather_epi32 (v_zero, m_is_not_ignored, v_daddr_shift8, TBL24_h, _MM_UPCONV_EPI32_UINT16, sizeof(uint16_t), _MM_HINT_NT);
-			__mmask16 m_top_bit_set = _mm512_mask_cmp_epu32_mask (m_valid_so_far, _mm512_mask_and_epi32(v_zero, m_valid_so_far, v_temp_dest, v_0x8000), v_zero, _MM_CMPINT_NE);
-			
-			__mmask16 m_both_cond_met = _mm512_kand (m_is_not_ignored, m_top_bit_set);
-			__m512i v_index2 = _mm512_add_epi32(_mm512_slli_epi32 (_mm512_and_epi32(v_temp_dest, v_0x7fff), 8), _mm512_and_epi32(v_daddr, v_0xff));
-			__m512i v_result = _mm512_mask_i32extgather_epi32(v_temp_dest, m_both_cond_met, v_index2, TBLlong_h, _MM_UPCONV_EPI32_UINT16, sizeof(uint16_t), _MM_HINT_NT);
-			//printvec(v_result);
-			m_valid_so_far = _mm512_kand(m_valid_so_far, _mm512_mask_cmp_epu32_mask(m_valid_so_far, v_result, v_low_16bit_mask, _MM_CMPINT_NE));
-			//printmask(m_valid_so_far);
-		}
-		__m512i v_ip_ttl = _mm512_mask_i32extgather_epi32 (v_zero, m_valid_so_far, v_ip_ttl_offset, inputbuf, _MM_UPCONV_EPI32_UINT8, 1, _MM_HINT_NT);
-		//printvec(v_ip_ttl);
-		__mmask16 m_ttl_gt_1 = _mm512_mask_cmp_epi32_mask(m_valid_so_far, v_ip_ttl, v_one, _MM_CMPINT_GT);
-		m_valid_so_far = _mm512_kand(m_valid_so_far, m_ttl_gt_1);
-		//printmask(m_valid_so_far);
-		__m512i v_ip_ttl_dec = _mm512_mask_sub_epi32(v_zero, m_valid_so_far, v_ip_ttl, v_one);
-		// TODO: MERGE GATHER SCATTER FOR TTL AND CHECKSUM UPDATES SINCE THEY FIT WITHIN SAME WORD
-		_mm512_mask_i32extscatter_epi32(inputbuf, m_valid_so_far, v_ip_ttl_offset, v_ip_ttl_dec, _MM_DOWNCONV_EPI32_UINT8, 1, _MM_HINT_NT);
-		__m512i v_ip_csum_n = _mm512_mask_i32extgather_epi32 (v_zero, m_valid_so_far, v_ip_csum_offset, inputbuf, _MM_UPCONV_EPI32_UINT16, 1, _MM_HINT_NT);
-		__m512i v_ip_csum = _mm512_mask_or_epi32(v_zero, m_valid_so_far, 
-								_mm512_mask_and_epi32(v_zero, m_valid_so_far, v_top4B_mask, _mm512_mask_srli_epi32(v_zero, m_valid_so_far, v_ip_csum_n, 8)),
-								_mm512_mask_and_epi32(v_zero, m_valid_so_far, v_top3B_mask, _mm512_mask_slli_epi32(v_zero, m_valid_so_far, v_ip_csum_n, 8)));
-		__m512i v_ip_csum_not = _mm512_mask_andnot_epi32(v_zero, m_valid_so_far, v_ip_csum, v_ip_csum);
-		v_ip_csum = _mm512_mask_add_epi32(v_zero, m_valid_so_far, _mm512_mask_and_epi32(v_zero, m_valid_so_far, v_ip_csum_not, v_low_16bit_mask), v_0xfeff);
-		__m512i v_ip_csum_rshift16 = _mm512_mask_srli_epi32(v_zero, m_valid_so_far, v_ip_csum, 16);
-		__m512i v_ip_new_csum_h = _mm512_mask_and_epi32(v_zero, m_valid_so_far, v_low_16bit_mask,
-				_mm512_mask_add_epi32(v_zero, m_valid_so_far, v_ip_csum, v_ip_csum_rshift16));
-		__m512i v_ip_new_csum_not = _mm512_mask_or_epi32(v_zero, m_valid_so_far, 
-								_mm512_mask_and_epi32(v_zero, m_valid_so_far, v_top4B_mask, _mm512_mask_srli_epi32(v_zero, m_valid_so_far, v_ip_new_csum_h, 8)),
-								_mm512_mask_and_epi32(v_zero, m_valid_so_far, v_top3B_mask, _mm512_mask_slli_epi32(v_zero, m_valid_so_far, v_ip_new_csum_h, 8)));
-		__m512i v_ip_new_csum = _mm512_mask_andnot_epi32(v_zero, m_valid_so_far, v_ip_new_csum_not, v_ip_new_csum_not);
+            m_valid_so_far = _mm512_kand(m_valid_so_far, m_checksum_zero);
+        }
+        // FINISH LOOKUP, DECTTL, UPDATE CHECKSUM AND WHATNOT
+        {
+            // BEGIN LOOKUP
+            __m512i v_daddr_n = _mm512_mask_i32extgather_epi32 (v_zero, m_valid_so_far, v_ip_daddr_offset, inputbuf, _MM_UPCONV_EPI32_NONE, 1, _MM_HINT_NT);
+            __m512i v_daddr_top1B_h = _mm512_mask_slli_epi32(v_zero, m_valid_so_far, v_daddr_n, 24);
+            __m512i v_daddr_top2B_h = _mm512_mask_and_epi32(v_zero, m_valid_so_far, v_top2B_mask, _mm512_mask_slli_epi32(v_zero, m_valid_so_far, v_daddr_n, 8));
+            __m512i v_daddr_top3B_h = _mm512_mask_and_epi32(v_zero, m_valid_so_far, v_top3B_mask, _mm512_mask_srli_epi32(v_zero, m_valid_so_far, v_daddr_n, 8));
+            __m512i v_daddr_top4B_h = _mm512_mask_and_epi32(v_zero, m_valid_so_far, v_top4B_mask, _mm512_mask_srli_epi32(v_zero, m_valid_so_far, v_daddr_n, 24));
+            __m512i v_daddr = _mm512_mask_or_epi32(v_zero, m_valid_so_far, _mm512_mask_or_epi32(v_zero, m_valid_so_far, v_daddr_top1B_h, v_daddr_top2B_h), _mm512_mask_or_epi32(v_zero, m_valid_so_far, v_daddr_top3B_h, v_daddr_top4B_h));
+            //printvec(v_daddr);
+            __m512i v_daddr_shift8 = _mm512_mask_srli_epi32(v_daddr, m_valid_so_far, v_daddr, 8);
+            __mmask16 m_is_not_ignored = _mm512_mask_cmp_epu32_mask (m_valid_so_far, v_daddr, v_ignored_ip, _MM_CMPINT_NE);
+            __m512i v_temp_dest = _mm512_mask_i32extgather_epi32 (v_zero, m_is_not_ignored, v_daddr_shift8, TBL24_h, _MM_UPCONV_EPI32_UINT16, sizeof(uint16_t), _MM_HINT_NT);
+            __mmask16 m_top_bit_set = _mm512_mask_cmp_epu32_mask (m_valid_so_far, _mm512_mask_and_epi32(v_zero, m_valid_so_far, v_temp_dest, v_0x8000), v_zero, _MM_CMPINT_NE);
+            
+            __mmask16 m_both_cond_met = _mm512_kand (m_is_not_ignored, m_top_bit_set);
+            __m512i v_index2 = _mm512_add_epi32(_mm512_slli_epi32 (_mm512_and_epi32(v_temp_dest, v_0x7fff), 8), _mm512_and_epi32(v_daddr, v_0xff));
+            __m512i v_result = _mm512_mask_i32extgather_epi32(v_temp_dest, m_both_cond_met, v_index2, TBLlong_h, _MM_UPCONV_EPI32_UINT16, sizeof(uint16_t), _MM_HINT_NT);
+            //printvec(v_result);
+            m_valid_so_far = _mm512_kand(m_valid_so_far, _mm512_mask_cmp_epu32_mask(m_valid_so_far, v_result, v_low_16bit_mask, _MM_CMPINT_NE));
+            //printmask(m_valid_so_far);
+        }
+        __m512i v_ip_ttl = _mm512_mask_i32extgather_epi32 (v_zero, m_valid_so_far, v_ip_ttl_offset, inputbuf, _MM_UPCONV_EPI32_UINT8, 1, _MM_HINT_NT);
+        //printvec(v_ip_ttl);
+        __mmask16 m_ttl_gt_1 = _mm512_mask_cmp_epi32_mask(m_valid_so_far, v_ip_ttl, v_one, _MM_CMPINT_GT);
+        m_valid_so_far = _mm512_kand(m_valid_so_far, m_ttl_gt_1);
+        //printmask(m_valid_so_far);
+        __m512i v_ip_ttl_dec = _mm512_mask_sub_epi32(v_zero, m_valid_so_far, v_ip_ttl, v_one);
+        // TODO: MERGE GATHER SCATTER FOR TTL AND CHECKSUM UPDATES SINCE THEY FIT WITHIN SAME WORD
+        _mm512_mask_i32extscatter_epi32(inputbuf, m_valid_so_far, v_ip_ttl_offset, v_ip_ttl_dec, _MM_DOWNCONV_EPI32_UINT8, 1, _MM_HINT_NT);
+        __m512i v_ip_csum_n = _mm512_mask_i32extgather_epi32 (v_zero, m_valid_so_far, v_ip_csum_offset, inputbuf, _MM_UPCONV_EPI32_UINT16, 1, _MM_HINT_NT);
+        __m512i v_ip_csum = _mm512_mask_or_epi32(v_zero, m_valid_so_far, 
+                                _mm512_mask_and_epi32(v_zero, m_valid_so_far, v_top4B_mask, _mm512_mask_srli_epi32(v_zero, m_valid_so_far, v_ip_csum_n, 8)),
+                                _mm512_mask_and_epi32(v_zero, m_valid_so_far, v_top3B_mask, _mm512_mask_slli_epi32(v_zero, m_valid_so_far, v_ip_csum_n, 8)));
+        __m512i v_ip_csum_not = _mm512_mask_andnot_epi32(v_zero, m_valid_so_far, v_ip_csum, v_ip_csum);
+        v_ip_csum = _mm512_mask_add_epi32(v_zero, m_valid_so_far, _mm512_mask_and_epi32(v_zero, m_valid_so_far, v_ip_csum_not, v_low_16bit_mask), v_0xfeff);
+        __m512i v_ip_csum_rshift16 = _mm512_mask_srli_epi32(v_zero, m_valid_so_far, v_ip_csum, 16);
+        __m512i v_ip_new_csum_h = _mm512_mask_and_epi32(v_zero, m_valid_so_far, v_low_16bit_mask,
+                _mm512_mask_add_epi32(v_zero, m_valid_so_far, v_ip_csum, v_ip_csum_rshift16));
+        __m512i v_ip_new_csum_not = _mm512_mask_or_epi32(v_zero, m_valid_so_far, 
+                                _mm512_mask_and_epi32(v_zero, m_valid_so_far, v_top4B_mask, _mm512_mask_srli_epi32(v_zero, m_valid_so_far, v_ip_new_csum_h, 8)),
+                                _mm512_mask_and_epi32(v_zero, m_valid_so_far, v_top3B_mask, _mm512_mask_slli_epi32(v_zero, m_valid_so_far, v_ip_new_csum_h, 8)));
+        __m512i v_ip_new_csum = _mm512_mask_andnot_epi32(v_zero, m_valid_so_far, v_ip_new_csum_not, v_ip_new_csum_not);
 
-		_mm512_mask_i32extscatter_epi32(inputbuf, m_valid_so_far, v_ip_csum_offset, v_ip_new_csum, _MM_DOWNCONV_EPI32_UINT16, 1, _MM_HINT_NT);
-		//printmask(m_valid_so_far);
-		__m512i v_result = _mm512_mask_xor_epi32(v_drop, m_is_slowpath, v_drop, v_drop);
-				//printvec(v_result);
-				v_result = _mm512_mask_add_epi32(v_result, m_is_slowpath, v_result, v_slowpath);
-				//printvec(v_result);
-				v_result = _mm512_mask_xor_epi32(v_result, m_valid_so_far, v_result, v_result);
-				//printvec(v_result);
-				v_result = _mm512_mask_add_epi32(v_result, m_valid_so_far, v_result, v_continue);
-				//printvec(v_result);
-		if ( g_once ) {
-			g_once = false;
-			//printvec(v_result);
-		}
-		_mm512_mask_extstore_epi32(outputbuf, m_within_range, v_result, _MM_DOWNCONV_EPI32_NONE, _MM_HINT_NT);
-	}
+        _mm512_mask_i32extscatter_epi32(inputbuf, m_valid_so_far, v_ip_csum_offset, v_ip_new_csum, _MM_DOWNCONV_EPI32_UINT16, 1, _MM_HINT_NT);
+        //printmask(m_valid_so_far);
+        __m512i v_result = _mm512_mask_xor_epi32(v_drop, m_is_slowpath, v_drop, v_drop);
+                //printvec(v_result);
+                v_result = _mm512_mask_add_epi32(v_result, m_is_slowpath, v_result, v_slowpath);
+                //printvec(v_result);
+                v_result = _mm512_mask_xor_epi32(v_result, m_valid_so_far, v_result, v_result);
+                //printvec(v_result);
+                v_result = _mm512_mask_add_epi32(v_result, m_valid_so_far, v_result, v_continue);
+                //printvec(v_result);
+        if ( g_once ) {
+            g_once = false;
+            //printvec(v_result);
+        }
+        _mm512_mask_extstore_epi32(outputbuf, m_within_range, v_result, _MM_DOWNCONV_EPI32_NONE, _MM_HINT_NT);
+    }
 #endif
 #endif
-	w->task_done_barrier->here(w->thread_id);
+    w->task_done_barrier->here(w->thread_id);
 }
 

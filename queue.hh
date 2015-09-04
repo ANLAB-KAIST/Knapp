@@ -238,20 +238,20 @@ public:
     {
         return count;
     }
-	
-	bool full() const
-	{
-		return count == max_size;
-	}
+    
+    bool full() const
+    {
+        return count == max_size;
+    }
 
-	size_t capacity() const 
-	{
-		return max_size;
-	}
+    size_t capacity() const 
+    {
+        return max_size;
+    }
 
-	size_t free_count() const {
-		return max_size - count;
-	}
+    size_t free_count() const {
+        return max_size - count;
+    }
 
 private:
     T *v_;

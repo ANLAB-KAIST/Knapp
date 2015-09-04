@@ -7,17 +7,17 @@
 #define ETHER_TYPE_LEN  2 /**< Length of Ethernet type field. */
 #define ETHER_CRC_LEN   4 /**< Length of Ethernet CRC. */
 #define ETHER_HDR_LEN   \
-	(ETHER_ADDR_LEN * 2 + ETHER_TYPE_LEN) /**< Length of Ethernet header. */
+    (ETHER_ADDR_LEN * 2 + ETHER_TYPE_LEN) /**< Length of Ethernet header. */
 #define ETHER_MIN_LEN   64    /**< Minimum frame len, including CRC. */
 #define ETHER_MAX_LEN   1518  /**< Maximum frame len, including CRC. */
 #define ETHER_MTU       \
-	(ETHER_MAX_LEN - ETHER_HDR_LEN - ETHER_CRC_LEN) /**< Ethernet MTU. */
+    (ETHER_MAX_LEN - ETHER_HDR_LEN - ETHER_CRC_LEN) /**< Ethernet MTU. */
 
 #define ETHER_MAX_VLAN_FRAME_LEN \
-	(ETHER_MAX_LEN + 4) /**< Maximum VLAN frame length, including CRC. */
+    (ETHER_MAX_LEN + 4) /**< Maximum VLAN frame length, including CRC. */
 
 #define ETHER_MAX_JUMBO_FRAME_LEN \
-	0x3F00 /**< Maximum Jumbo frame length, including CRC. */
+    0x3F00 /**< Maximum Jumbo frame length, including CRC. */
 
 #define ETHER_MAX_VLAN_ID  4095 /**< Maximum VLAN ID. */
 
@@ -46,7 +46,7 @@
  * See http://standards.ieee.org/regauth/groupmac/tutorial.html
  */
 struct ether_addr {
-	uint8_t addr_bytes[ETHER_ADDR_LEN]; /**< Address bytes in transmission order */
+    uint8_t addr_bytes[ETHER_ADDR_LEN]; /**< Address bytes in transmission order */
 } __attribute__((__packed__));
 
 #define ETHER_LOCAL_ADMIN_ADDR 0x02 /**< Locally assigned Eth. address. */
@@ -67,13 +67,13 @@ struct ether_addr {
  *  False (0) otherwise.
  */
 static inline int is_same_ether_addr(const struct ether_addr *ea1,
-				     const struct ether_addr *ea2)
+                     const struct ether_addr *ea2)
 {
-	int i;
-	for (i = 0; i < ETHER_ADDR_LEN; i++)
-		if (ea1->addr_bytes[i] != ea2->addr_bytes[i])
-			return 0;
-	return 1;
+    int i;
+    for (i = 0; i < ETHER_ADDR_LEN; i++)
+        if (ea1->addr_bytes[i] != ea2->addr_bytes[i])
+            return 0;
+    return 1;
 }
 
 /**
@@ -88,11 +88,11 @@ static inline int is_same_ether_addr(const struct ether_addr *ea1,
  */
 static inline int is_zero_ether_addr(const struct ether_addr *ea)
 {
-	int i;
-	for (i = 0; i < ETHER_ADDR_LEN; i++)
-		if (ea->addr_bytes[i] != 0x00)
-			return 0;
-	return 1;
+    int i;
+    for (i = 0; i < ETHER_ADDR_LEN; i++)
+        if (ea->addr_bytes[i] != 0x00)
+            return 0;
+    return 1;
 }
 
 /**
@@ -107,7 +107,7 @@ static inline int is_zero_ether_addr(const struct ether_addr *ea)
  */
 static inline int is_unicast_ether_addr(const struct ether_addr *ea)
 {
-	return ((ea->addr_bytes[0] & ETHER_GROUP_ADDR) == 0);
+    return ((ea->addr_bytes[0] & ETHER_GROUP_ADDR) == 0);
 }
 
 /**
@@ -122,7 +122,7 @@ static inline int is_unicast_ether_addr(const struct ether_addr *ea)
  */
 static inline int is_multicast_ether_addr(const struct ether_addr *ea)
 {
-	return (ea->addr_bytes[0] & ETHER_GROUP_ADDR);
+    return (ea->addr_bytes[0] & ETHER_GROUP_ADDR);
 }
 
 /**
@@ -137,10 +137,10 @@ static inline int is_multicast_ether_addr(const struct ether_addr *ea)
  */
 static inline int is_broadcast_ether_addr(const struct ether_addr *ea)
 {
-	const uint16_t *ea_words = (const uint16_t *)ea;
+    const uint16_t *ea_words = (const uint16_t *)ea;
 
-	return (ea_words[0] == 0xFFFF && ea_words[1] == 0xFFFF &&
-		ea_words[2] == 0xFFFF);
+    return (ea_words[0] == 0xFFFF && ea_words[1] == 0xFFFF &&
+        ea_words[2] == 0xFFFF);
 }
 
 /**
@@ -155,7 +155,7 @@ static inline int is_broadcast_ether_addr(const struct ether_addr *ea)
  */
 static inline int is_universal_ether_addr(const struct ether_addr *ea)
 {
-	return ((ea->addr_bytes[0] & ETHER_LOCAL_ADMIN_ADDR) == 0);
+    return ((ea->addr_bytes[0] & ETHER_LOCAL_ADMIN_ADDR) == 0);
 }
 
 /**
@@ -170,7 +170,7 @@ static inline int is_universal_ether_addr(const struct ether_addr *ea)
  */
 static inline int is_local_admin_ether_addr(const struct ether_addr *ea)
 {
-	return ((ea->addr_bytes[0] & ETHER_LOCAL_ADMIN_ADDR) != 0);
+    return ((ea->addr_bytes[0] & ETHER_LOCAL_ADMIN_ADDR) != 0);
 }
 
 /**
@@ -186,7 +186,7 @@ static inline int is_local_admin_ether_addr(const struct ether_addr *ea)
  */
 static inline int is_valid_assigned_ether_addr(const struct ether_addr *ea)
 {
-	return (is_unicast_ether_addr(ea) && (! is_zero_ether_addr(ea)));
+    return (is_unicast_ether_addr(ea) && (! is_zero_ether_addr(ea)));
 }
 
 /**
@@ -198,20 +198,20 @@ static inline int is_valid_assigned_ether_addr(const struct ether_addr *ea)
  *   A pointer to a ether_addr structure where to copy the Ethernet address.
  */
 static inline void ether_addr_copy(const struct ether_addr *ea_from,
-				   struct ether_addr *ea_to)
+                   struct ether_addr *ea_to)
 {
 #ifdef __INTEL_COMPILER
-	uint16_t *from_words = (uint16_t *)(ea_from->addr_bytes);
-	uint16_t *to_words   = (uint16_t *)(ea_to->addr_bytes);
+    uint16_t *from_words = (uint16_t *)(ea_from->addr_bytes);
+    uint16_t *to_words   = (uint16_t *)(ea_to->addr_bytes);
 
-	to_words[0] = from_words[0];
-	to_words[1] = from_words[1];
-	to_words[2] = from_words[2];
+    to_words[0] = from_words[0];
+    to_words[1] = from_words[1];
+    to_words[2] = from_words[2];
 #else
-	/*
-	 * Use the common way, because of a strange gcc warning.
-	 */
-	*ea_to = *ea_from;
+    /*
+     * Use the common way, because of a strange gcc warning.
+     */
+    *ea_to = *ea_from;
 #endif
 }
 
@@ -228,15 +228,15 @@ static inline void ether_addr_copy(const struct ether_addr *ea_from,
  */
 static inline void
 ether_format_addr(char *buf, uint16_t size,
-		  const struct ether_addr *eth_addr)
+          const struct ether_addr *eth_addr)
 {
-	snprintf(buf, size, "%02X:%02X:%02X:%02X:%02X:%02X",
-		 eth_addr->addr_bytes[0],
-		 eth_addr->addr_bytes[1],
-		 eth_addr->addr_bytes[2],
-		 eth_addr->addr_bytes[3],
-		 eth_addr->addr_bytes[4],
-		 eth_addr->addr_bytes[5]);
+    snprintf(buf, size, "%02X:%02X:%02X:%02X:%02X:%02X",
+         eth_addr->addr_bytes[0],
+         eth_addr->addr_bytes[1],
+         eth_addr->addr_bytes[2],
+         eth_addr->addr_bytes[3],
+         eth_addr->addr_bytes[4],
+         eth_addr->addr_bytes[5]);
 }
 
 /**
@@ -244,9 +244,9 @@ ether_format_addr(char *buf, uint16_t size,
  * and frame type.
  */
 struct ether_hdr {
-	struct ether_addr d_addr; /**< Destination address. */
-	struct ether_addr s_addr; /**< Source address. */
-	uint16_t ether_type;      /**< Frame type. */
+    struct ether_addr d_addr; /**< Destination address. */
+    struct ether_addr s_addr; /**< Source address. */
+    uint16_t ether_type;      /**< Frame type. */
 } __attribute__((__packed__));
 
 #endif
