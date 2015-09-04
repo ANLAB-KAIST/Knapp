@@ -1,5 +1,7 @@
 #include <unistd.h>
+#ifndef OFFLOAD_NOOP
 #include <scif.h>
+#endif
 #include <iostream>
 #include <algorithm>
 #include <string>
@@ -31,7 +33,7 @@ worker_func_t worker_funcs[APP_TOTAL] = {
     app_nat,
     app_ipv4_lookup
 };
-#endif
+#endif /* __MIC__ */
 
 
 std::map<std::string, knapp_proto_t> appstring_to_proto = {
@@ -122,7 +124,7 @@ void log_worker(int tid, const char *format, ... ) {
 }
 
 
-
+#ifndef OFFLOAD_NOOP
 uint16_t get_host_dataport(int vdev_id) {
     return vdev_id + KNAPP_HOST_DATAPORT_BASE;
 }
@@ -162,39 +164,39 @@ void scif_connect_with_retry(struct vdevice *vdev) {
     for (unsigned retry = 0; retry < KNAPP_SCIF_MAX_CONN_RETRY; retry++) {
         rc = scif_connect(vdev->data_epd, &vdev->remote_dataport);
         if ( rc < 0 ) {
-            fprintf(stderr, "vdevice %d could not connect to remote data port (%d, %d). Retrying (%u) ...\n", 
+            fprintf(stderr, "vdevice %d could not connect to remote data port (%d, %d). Retrying (%u) ...\n",
                     vdev->device_id, vdev->remote_dataport.node, vdev->remote_dataport.port, retry + 1);
             usleep(500000);
             continue;
         }
-        fprintf(stderr, "vdevice %d connected to remote data port (%d, %d).\n", 
+        fprintf(stderr, "vdevice %d connected to remote data port (%d, %d).\n",
                 vdev->device_id, vdev->remote_dataport.node, vdev->remote_dataport.port);
         break;
     }
     if ( rc < 0 ) {
-        fprintf(stderr, "Failed to connect vdevice %d to remote data port (%d, %d). Error code %d\n", 
+        fprintf(stderr, "Failed to connect vdevice %d to remote data port (%d, %d). Error code %d\n",
                 vdev->device_id, vdev->remote_dataport.node, vdev->remote_dataport.port, rc);
         rte_exit(EXIT_FAILURE, "All 5 data port connection attemps have failed\n");
     }
     for (unsigned retry = 0; retry < KNAPP_SCIF_MAX_CONN_RETRY; retry++) {
         rc = scif_connect(vdev->ctrl_epd, &vdev->remote_ctrlport);
         if ( rc < 0 ) {
-            fprintf(stderr, "vdevice %d could not connect to remote control port (%d, %d). Retrying (%u) ...\n", 
+            fprintf(stderr, "vdevice %d could not connect to remote control port (%d, %d). Retrying (%u) ...\n",
                     vdev->device_id, vdev->remote_ctrlport.node, vdev->remote_ctrlport.port, retry + 1);
             usleep(500000);
             continue;
         }
-        fprintf(stderr, "vdevice %d connected to remote control port (%d, %d).\n", 
+        fprintf(stderr, "vdevice %d connected to remote control port (%d, %d).\n",
                 vdev->device_id, vdev->remote_ctrlport.node, vdev->remote_ctrlport.port);
         break;
     }
     if ( rc < 0 ) {
-        fprintf(stderr, "Failed to connect vdevice %d to remote control port (%d, %d). Error code %d\n", 
+        fprintf(stderr, "Failed to connect vdevice %d to remote control port (%d, %d). Error code %d\n",
                 vdev->device_id, vdev->remote_ctrlport.node, vdev->remote_ctrlport.port, rc);
         rte_exit(EXIT_FAILURE, "All 5 control port connection attemps have failed\n");
     }
 }
-
+#endif /* !OFFLOAD_NOOP */
 
 std::string slurp(std::ifstream& in) {
     return (static_cast<std::stringstream const&>(std::stringstream() << in.rdbuf()).str());
@@ -208,6 +210,7 @@ uint64_t knapp_get_usec(void)
     return now.tv_sec * 1000000L + now.tv_nsec / 1000L;
 }
 
+#ifndef OFFLOAD_NOOP
 void send_ctrlmsg(scif_epd_t epd, uint8_t *buf, ctrl_msg_t msg, void *p1, void *p2, void *p3, void *p4) {
     uint8_t *buf_orig = buf;
     int size;
@@ -258,7 +261,7 @@ void send_ctrlmsg(scif_epd_t epd, uint8_t *buf, ctrl_msg_t msg, void *p1, void *
         return;
     }
 }
-
+#endif /* !OFFLOAD_NOOP */
 
 
 
@@ -671,7 +674,7 @@ static void ipv4_load_rib_from_file(const char* filename, uint16_t *_TBL24, uint
         */
         uint32_t addr = ntohl(inet_addr(saddr.c_str()));
         uint16_t len = atoi(slen.c_str());
-        
+
         //uint32_t addr = ntohl(inet_addr(str_addr));
         //uint16_t len = atoi(str_len);
         pPrefixTable[len][addr] = rand() % 65536;
@@ -719,15 +722,16 @@ static void ipv4_load_rib_from_file(const char* filename, uint16_t *_TBL24, uint
         }
     }
 }
-#endif
+#endif /* __MIC__ */
 
 
+#ifndef OFFLOAD_NOOP
 #ifdef __MIC__
 int pollring_init(struct poll_ring *r, int32_t n, scif_epd_t epd) {
 #else
 int __global_pollring_counter = 0;
 int pollring_init(struct poll_ring *r, int32_t n, scif_epd_t epd, int node) {
-#endif
+#endif /* !__MIC__ */
     /*
     if ( unlikely((n & (n-1)) != 0) ) {
         log_error("Error - length of poll_ring must be power of 2\n");
@@ -741,8 +745,8 @@ int pollring_init(struct poll_ring *r, int32_t n, scif_epd_t epd, int node) {
 #ifdef __MIC__
     r->ring =
         (uint64_t volatile *) mem_alloc(r->alloc_bytes, PAGE_SIZE);
-#else
-    r->ring = 
+#else /* __MIC__ */
+    r->ring =
         (uint64_t volatile *) rte_malloc_socket("poll_ring", r->alloc_bytes, PAGE_SIZE, node);
     char ringname[32];
     snprintf(ringname, 32, "poll-id-pool-%d", __global_pollring_counter++);
@@ -756,17 +760,15 @@ int pollring_init(struct poll_ring *r, int32_t n, scif_epd_t epd, int node) {
         local_ring[i] = i;
     }
     assert ( 0 == rte_ring_enqueue_bulk(r->id_pool, (void **)local_ring, n) );
-#endif
+#endif /* !__MIC__ */
     if ( r->ring == NULL) {
         return -1;
     }
     memset((void *) r->ring, 0, r->alloc_bytes);
-#ifndef OFFLOAD_NOOP
     r->ring_ra = scif_register(epd, (void *) r->ring, r->alloc_bytes, 0, SCIF_PROT_WRITE, 0);
     if ( r->ring_ra < 0 ) {
         return -1;
     }
-#endif
     //fprintf(stderr, " done.\n");
     return 0;
 }
@@ -785,7 +787,7 @@ int pollring_get(struct poll_ring *r, int32_t *ptr) {
 int pollring_put(struct poll_ring *r, int poll_id) {
     return rte_ring_enqueue(r->id_pool, (void *) ((intptr_t) poll_id));
 }
-#endif
+#endif /* !__MIC__ */
 
 #ifdef __MIC__
 
@@ -847,7 +849,7 @@ void build_vdevice(Json::Value& conf, struct vdevice **pvdev) {
     assert ( vdev->local_ctrlport.port == scif_bind(vdev->ctrl_listen_epd, vdev->local_ctrlport.port ) );
     // The rest of the fields are init'd in the beginning of vdev master thread
 }
-#endif
+#endif /* __MIC__ */
 
 #ifdef __MIC__
 int bufarray_init(struct bufarray *ba, uint32_t n, uint64_t elem_size, size_t align) {
@@ -887,7 +889,7 @@ int bufarray_ra_init(struct bufarray *ba, uint32_t n, uint64_t elem_size, size_t
     return 0;
 }
 
-#else
+#else /* __MIC__ */
 int bufarray_init(struct bufarray *ba, uint32_t n, uint64_t elem_size, size_t align, int numa_node) {
     assert ( n > 0 && elem_size > 0 );
     ba->size = n;
@@ -900,7 +902,7 @@ int bufarray_init(struct bufarray *ba, uint32_t n, uint64_t elem_size, size_t al
     assert ( base_va != NULL );
     for ( uint32_t i = 0; i < n; i++ ) {
         ba->bufs[i] = base_va + (i * elem_alloc_size);
-        
+
     }
     if ( !ba->uses_ra ) {
         ba->initialized = true;
@@ -925,7 +927,8 @@ int bufarray_ra_init(struct bufarray *ba, uint32_t n, uint64_t elem_size, size_t
     ba->initialized = true;
     return 0;
 }
-#endif
+#endif /* !__MIC__ */
+#endif /* !__OFFLOAD_NOOP */
 
 void log_device(int vdevice_id, const char *format, ... ) {
     char str[512];
@@ -937,6 +940,7 @@ void log_device(int vdevice_id, const char *format, ... ) {
 }
 
 
+#ifndef OFFLOAD_NOOP
 #ifdef __MIC__
 extern int core_util[][MAX_THREADS_PER_CORE];
 
@@ -945,7 +949,7 @@ int get_least_utilized_ht(int pcore) {
     int ret = 0;
     assert ( pcore >= 0 && pcore < NUM_CORES );
     for ( int i = 0; i < MAX_THREADS_PER_CORE; i++ ) {
-        if ( core_util[pcore][i] == 0 ) { 
+        if ( core_util[pcore][i] == 0 ) {
             return i;
         }
         if ( core_util[pcore][i] < min_util ) {
@@ -1080,7 +1084,7 @@ void recv_ctrlmsg(scif_epd_t epd, uint8_t *buf, ctrl_msg_t msg, void *p1, void *
     } else if ( msg == OP_SEND_DATA ) {
         *((uint64_t *) p1) = *((uint64_t *) buf); // data size
         buf += sizeof(uint64_t);
-        *((off_t *) p2) = *((off_t *) buf); // 
+        *((off_t *) p2) = *((off_t *) buf); //
         buf += sizeof(off_t);
         *((int32_t *) p3) = *((int32_t *) buf); // poll-ring index to use
         buf += sizeof(int32_t);
@@ -1098,7 +1102,7 @@ void send_ctrlresp(scif_epd_t epd, uint8_t *buf, ctrl_msg_t msg_recvd, void *p1,
     *((int32_t *) buf) = RESP_SUCCESS;
     buf += sizeof(int32_t);
     if ( msg == OP_SET_WORKLOAD_TYPE ) {
-        
+
     } else if ( msg == OP_MALLOC ) {
         *((off_t *) buf) = *((off_t *) p1);
         // Expects uint64_t remote offset in return
@@ -1111,7 +1115,7 @@ void send_ctrlresp(scif_epd_t epd, uint8_t *buf, ctrl_msg_t msg_recvd, void *p1,
     } else if ( msg == OP_REG_POLLRING ) {
         *((off_t *) buf) = *((off_t *) p1); // mic's registered poll ring base offset
     } else if ( msg == OP_SEND_DATA ) {
-        
+
     } else {
         rte_panic("Invalid control message: %d!\n", msg);
         return;
@@ -1123,7 +1127,8 @@ void send_ctrlresp(scif_epd_t epd, uint8_t *buf, ctrl_msg_t msg_recvd, void *p1,
     }
     //log_info("Sent %d bytes as ctrl resp (SUCCESS)\n", KNAPP_OFFLOAD_CTRLBUF_SIZE);
 }
-#else
+#endif /* !OFFLOAD_NOOP */
+#else /* __MIC__ */
 int knapp_num_hyperthreading_siblings(void) {
     // TODO: make it portable
     static rte_spinlock_t _ht_func_lock = RTE_SPINLOCK_INITIALIZER;
@@ -1150,7 +1155,7 @@ int knapp_num_hyperthreading_siblings(void) {
 
 
 int knapp_get_num_cpus(void) {
-    return (int) sysconf(_SC_NPROCESSORS_ONLN) / knapp_num_hyperthreading_siblings();
+    return (int) numa_num_configured_cpus();;
 }
 
 int knapp_bind_cpu(int cpu) {
@@ -1177,7 +1182,7 @@ int knapp_bind_cpu(int cpu) {
     numa_bitmask_free(bmask);
     return 0;
 }
-#endif
+#endif /* !__MIC__ */
 
 Json::Value parse_config(std::string& filename) {
     Json::Reader reader;

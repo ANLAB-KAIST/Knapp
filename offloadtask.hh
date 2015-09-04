@@ -1,5 +1,6 @@
 #ifndef _OFFLOADTASK_HH_
 #define _OFFLOADTASK_HH_
+#ifndef OFFLOAD_NOOP
 
 #include <stdint.h>
 #include <stddef.h>
@@ -31,7 +32,6 @@
 
 
 #define SERIALIZED_LEN_INVALID 0x7fFfFfFfu
-
 struct offload_task {
     void set_offload_params(knapp_proto_t proto, int _poll_id, struct bufarray *_input_ba, struct bufarray *_result_ba, struct vdevice *_vdev) {
         apptype = proto;
@@ -150,5 +150,6 @@ struct offload_task {
     struct vdevice *vdev;
     //uint64_t ts_first_queued;
 } __rte_cache_aligned;
+#endif /* !OFFLOAD_NOOP */
 
 #endif

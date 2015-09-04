@@ -28,7 +28,9 @@ extern unsigned int if_nametoindex (const char *__ifname);
 extern char *if_indextoname (unsigned int __ifindex, char *__ifname);
 extern inline uint32_t myrand(uint64_t *seed);
 
+#ifndef OFFLOAD_NOOP
 #include <scif.h>
+#endif
 
 #include <rte_config.h>
 #include <rte_common.h>
@@ -156,7 +158,7 @@ static void io_node_stat_cb(struct ev_loop *loop, struct ev_async *watcher, int 
         struct rte_eth_stats s;
         for (j = 0; j < node_stat->num_ports; j++) {
             struct rte_eth_dev_info info;
-            rte_eth_dev_info_get((uint8_t) j, &info);
+            rte_eth_dev_info_get((uint8_t) ctx->txq_port_indexes[j], &info);
             total.port_stats[j].num_recv_pkts = rte_atomic64_read(&node_stat->port_stats[j].num_recv_pkts);
             total.port_stats[j].num_sent_pkts = rte_atomic64_read(&node_stat->port_stats[j].num_sent_pkts);
             total.port_stats[j].num_recv_bytes = rte_atomic64_read(&node_stat->port_stats[j].num_recv_bytes);
@@ -164,7 +166,7 @@ static void io_node_stat_cb(struct ev_loop *loop, struct ev_async *watcher, int 
             total.port_stats[j].num_invalid_pkts = rte_atomic64_read(&node_stat->port_stats[j].num_invalid_pkts);
             total.port_stats[j].num_sw_drop_pkts = rte_atomic64_read(&node_stat->port_stats[j].num_sw_drop_pkts);
             if ( info.pci_dev->numa_node == ctx->my_node) {
-                rte_eth_stats_get((uint8_t) j, &s);
+                rte_eth_stats_get((uint8_t) ctx->txq_port_indexes[j], &s);
                 total.port_stats[j].num_rx_drop_pkts = s.ierrors;
             } else {
                 total.port_stats[j].num_rx_drop_pkts = 0;
@@ -270,20 +272,22 @@ void handle_signal(int signal)
 static void offload_terminate_cb(struct ev_loop *loop, struct ev_async *w, int revents) {
     struct offload_context *actx = (struct offload_context *) ev_userdata(loop);
     ev_invoke_pending(loop);
+#ifndef OFFLOAD_NOOP
     for ( unsigned i = 0; i < actx->vdevs.size(); i++ ) {
         scif_close(actx->vdevs[i]->data_epd);
         scif_close(actx->vdevs[i]->ctrl_epd);
     }
+#endif
     ev_break(loop, EVBREAK_ALL);
 }
 
 void *offload_loop(void *arg) {
+    //return NULL;
     struct offload_context *actx = (struct offload_context *) arg;
     int tid = actx->my_cfg_cpu;
     actx->evloop = ev_loop_new(EVFLAG_AUTO);
     // Thread naming and pinning
     char tname[64];
-    int rc;
     snprintf(tname, 64, "offload-n%d-lc%d", actx->my_node, actx->my_cpu);
     prctl(PR_SET_NAME, tname, 0, 0, 0);
     RTE_PER_LCORE(_lcore_id) = actx->my_cpu;
@@ -291,7 +295,8 @@ void *offload_loop(void *arg) {
     //assert ( (int) rte_socket_id() == actx->my_node );
     assert ( (int) rte_lcore_id() == actx->my_cpu );
     knapp_bind_cpu(actx->my_cpu);
-    
+    log_offload(tid, "Offload thread pinned to CPU %d (pcore %d of node %d)\n", actx->my_cpu, actx->my_cfg_cpu, actx->my_node);
+
     // Register offload params
 #ifndef OFFLOAD_NOOP
     for ( unsigned ivdev = 0; ivdev < actx->vdevs.size(); ivdev++ ) {
@@ -323,23 +328,24 @@ void *offload_loop(void *arg) {
             rte_exit(EXIT_FAILURE, "Error sending registered poll ring address for offload thread %d\n", actx->my_cfg_tid);
         }
         vdev->remote_poll_ring_window = *((off_t *) (vdev->ctrlbuf + sizeof(int32_t)));
-        
+
         log_offload(tid, "Received remote poll ring RA at %lld\n", vdev->remote_poll_ring_window);
     }
 #endif
     // Init ev_loop
-    actx->evloop = ev_loop_new(EVFLAG_AUTO);
-    ev_set_userdata(actx->evloop, actx);
+    //actx->evloop = ev_loop_new(EVFLAG_AUTO);
+    //ev_set_userdata(actx->evloop, actx);
 
     // Register terminate event
-    ev_set_cb(actx->terminate_watcher, offload_terminate_cb);
+    //ev_set_cb(actx->terminate_watcher, offload_terminate_cb);
 
-    ev_async_start(actx->evloop, actx->terminate_watcher);
-    
-    
-    
+    //ev_async_start(actx->evloop, actx->terminate_watcher);
+
+
+
     // All done! synchronize with master thread
     pthread_barrier_wait(actx->init_barrier);
+    log_offload(tid, "Passed init barrier\n");
 #ifndef OFFLOAD_NOOP
     while ( likely(!actx->exit) ) {
         for ( unsigned ivdev = 0; ivdev < actx->vdevs.size(); ivdev++ ) {
@@ -359,16 +365,16 @@ void *offload_loop(void *arg) {
                 }
                 vdev->next_poll = (next_poll + 1) % vdev->poll_ring.len;
                 //fprintf(stderr, "new poll id: %d\n", vdev->next_poll);
-            } 
+            }
         }
-        ev_run(actx->evloop, EVRUN_NOWAIT);
+        //ev_run(actx->evloop, EVRUN_NOWAIT);
     }
-#else
+#else /* OFFLOAD_NOOP */
     while ( likely(!actx->exit) ) {
         rte_pause();
-        ev_run(actx->evloop, EVRUN_NOWAIT);
+        //ev_run(actx->evloop, EVRUN_NOWAIT);
     }
-#endif
+#endif /* !OFFLOAD_NOOP */
     // Event loop broken. Free context and join master thread
     rte_free(arg);
     return NULL;
@@ -395,13 +401,12 @@ int io_loop(void *arg)
         return 0;
     }
     log_io(ctx->my_cfg_cpu, "IO thread with rte_lcore_id: %d\n", rte_lcore_id());
-    
+
     //assert((size_t)ctx->my_cpu == rte_lcore_id());
     if ( (size_t)ctx->my_cpu != rte_lcore_id() ) {
         log_info("I/O thread pinned to (%d, %d) exiting (core inconsistent with context - %d, %d)\n", (int) rte_socket_id(), (int) rte_lcore_id(), ctx->my_node, ctx->my_cpu);
         return 0;
     }
-
     assert ( (unsigned) ctx->my_cpu == rte_lcore_id() && (unsigned) ctx->my_node == rte_socket_id() );
     char tname[64];
     snprintf(tname, 64, "io-n%d-lc%d-num%d", ctx->my_node, ctx->my_cpu, ctx->my_cfg_cpu);
@@ -409,8 +414,8 @@ int io_loop(void *arg)
 
     int tid = ctx->my_cfg_cpu;
     //knapp_bind_cpu(ctx->my_cpu);
-    struct rte_mbuf **pkts = (struct rte_mbuf **) 
-        rte_malloc_socket("pkts", sizeof(struct rte_mbuf *) * ctx->io_batch_size * ctx->num_rx_queues, 
+    struct rte_mbuf **pkts = (struct rte_mbuf **)
+        rte_malloc_socket("pkts", sizeof(struct rte_mbuf *) * ctx->io_batch_size * ctx->num_rx_queues,
                 RTE_CACHE_LINE_SIZE, ctx->my_node);
     struct rte_mbuf **per_port_aggregation[ctx->num_tx_ports];
     //struct rte_mbuf **drop_pkts = (struct rte_mbuf **) rte_malloc_socket("per-port-aggr", sizeof(struct rte_mbuf *) * ctx->offload_batch_size * ctx->num_tx_ports, RTE_CACHE_LINE_SIZE, ctx->my_node);
@@ -440,15 +445,17 @@ int io_loop(void *arg)
     ctx->stat_timer->repeat = 1.;
     ev_timer_again(ctx->evloop, ctx->stat_timer);
     ctx->last_tx_tick = rte_rdtsc();
-    
+
     //assert ( 0 == rte_mempool_get(ctx->offload_task_mempool, (void **) &ctx->cur_offload_task) );
     //assert ( ctx->cur_offload_task != NULL );
+#ifndef OFFLOAD_NOOP
     ctx->cur_vdev_index = 0;
     struct vdevice *cur_vdev = ctx->vdevs[ctx->cur_vdev_index];
 
     assert ( 0 == pollring_get(&cur_vdev->poll_ring, &ctx->cur_task_id) );
     ctx->cur_offload_task = &cur_vdev->tasks_in_flight[ctx->cur_task_id];
     ctx->cur_offload_task->init(ctx->offload_batch_mempool, ctx->new_packet_mempool, ctx->offload_batch_size, ctx);
+#endif /* !OFFLOAD_NOOP */
     log_io(tid, "Entering IO loop...\n");
     while (likely(!ctx->exit)) {
 #ifndef OFFLOAD_NOOP
@@ -458,10 +465,10 @@ int io_loop(void *arg)
             int ring_idx = ctx->rxq_indexes[i_rxq];
             //log_io(tid, "Free count pre-rx: %d\n", rte_mempool_free_count(rx_mempools[port_idx][ring_idx]));
             unsigned recv_cnt = rte_eth_rx_burst((uint8_t) port_idx, ring_idx, &pkts[total_recv_cnt], ctx->io_batch_size);
-            
+
             for ( unsigned k = 0; k < recv_cnt; k++ ) {
                 struct rte_mbuf *cur_pkt = pkts[total_recv_cnt + k];
-                ctx->port_stats[port_idx].num_recv_bytes += (rte_pktmbuf_pkt_len(cur_pkt) + 24);
+                ctx->port_stats[ctx->inv_port_map[port_idx]].num_recv_bytes += (rte_pktmbuf_pkt_len(cur_pkt) + 24);
                 struct packet *packet = ctx->cur_offload_task->get_tail();
                 int rx_cfg_port = ctx->inv_port_map[port_idx];
                 assert ( rx_cfg_port != -1 );
@@ -513,12 +520,12 @@ int io_loop(void *arg)
                 }
             }
             total_recv_cnt += recv_cnt;
-            ctx->port_stats[port_idx].num_recv_pkts += recv_cnt;
+            ctx->port_stats[ctx->inv_port_map[port_idx]].num_recv_pkts += recv_cnt;
             if ( ctx->offload_task_q.full() ) {
                 break;
             }
         }
-        
+
         struct rte_ring *q = ctx->offload_completion_queue;
         //log_io(tid, "point reached: ring size %d\n", rte_ring_count(q));
         unsigned batches_to_tx = rte_ring_count(q);
@@ -538,10 +545,10 @@ int io_loop(void *arg)
                         int tx_port = packet->tx_port;
                         assert ( tx_port < ctx->num_tx_ports );
                         int& port_count = per_port_aggregation_count[tx_port];
-                        per_port_aggregation[tx_port][port_count++] = packet->mbuf;
+                        per_port_aggregation[ctx->inv_port_map[tx_port]][port_count++] = packet->mbuf;
                         struct ether_hdr *ethh = rte_pktmbuf_mtod(packet->mbuf, struct ether_hdr *);
                         ether_addr_copy(&ethh->s_addr, &ethh->d_addr);
-                        ether_addr_copy(&ctx->ports[packet->tx_port].addr, &ethh->s_addr);
+                        ether_addr_copy(&ctx->ports[ctx->inv_port_map[packet->tx_port]].addr, &ethh->s_addr);
                     } else {
                         log_io(tid, "Error - unknown packet process result type: %d\n", (int) result);
                     }
@@ -551,57 +558,63 @@ int io_loop(void *arg)
                 //rte_mempool_put(ctx->offload_task_mempool, (void *) ot);
             }
         }
-            
-#else
+
+#else /* !OFFLOAD_NOOP */
         unsigned total_recv_cnt = 0;
         for ( int i_rxq = 0; i_rxq < ctx->num_rx_queues; i_rxq++ ) {
             int port_idx = ctx->rxq_port_indexes[i_rxq];
             int ring_idx = ctx->rxq_indexes[i_rxq];
             //log_io(tid, "Free count pre-rx: %d\n", rte_mempool_free_count(rx_mempools[port_idx][ring_idx]));
             unsigned recv_cnt = rte_eth_rx_burst((uint8_t) port_idx, ring_idx, &pkts[total_recv_cnt], ctx->io_batch_size);
-            //log_io(tid, "rxq %d: received %u pkts\n", i_rxq, recv_cnt);
-            
+
             for ( unsigned k = 0; k < recv_cnt; k++ ) {
                 struct rte_mbuf *cur_pkt = pkts[total_recv_cnt + k];
-                ctx->port_stats[port_idx].num_recv_bytes += (rte_pktmbuf_pkt_len(cur_pkt) + 24);
-                struct packet *packet = ctx->cur_offload_task->get_tail();
+                ctx->port_stats[ctx->inv_port_map[port_idx]].num_recv_bytes += (rte_pktmbuf_pkt_len(cur_pkt) + 24);
+                struct packet packet;
                 int rx_cfg_port = ctx->inv_port_map[port_idx];
                 assert ( rx_cfg_port != -1 );
-                packet->rx_port = port_idx;
-                packet->rx_ring = ring_idx;
-                packet->tx_port = port_idx;
-                //packet->tx_port = ctx->txq_port_indexes[(rx_cfg_port + 1) % ctx->num_tx_ports];
-                packet->tx_ring = ctx->my_cfg_cpu;
-                packet->mbuf = cur_pkt;
-                packet->mp = ctx->new_packet_mempool;
-                packet->len = (int) rte_pktmbuf_pkt_len(cur_pkt);
-                int tx_port = packet->tx_port;
-                assert ( tx_port < ctx->num_tx_ports );
-                int& port_count = per_port_aggregation_count[tx_port];
-                per_port_aggregation[tx_port][port_count++] = packet->mbuf;
-                struct ether_hdr *ethh = rte_pktmbuf_mtod(packet->mbuf, struct ether_hdr *);
+                packet.rx_port = port_idx;
+                packet.rx_ring = ring_idx;
+                packet.tx_port = port_idx;
+                //packet.tx_port = ctx->txq_port_indexes[(rx_cfg_port + 1) % ctx->num_tx_ports];
+                packet.tx_ring = ctx->my_cfg_cpu;
+                packet.mbuf = cur_pkt;
+                packet.mp = ctx->new_packet_mempool;
+                packet.len = (int) rte_pktmbuf_pkt_len(cur_pkt);
+                int tx_port = packet.tx_port;
+                //assert ( tx_port < ctx->num_tx_ports );
+                int& port_count = per_port_aggregation_count[ctx->inv_port_map[tx_port]];
+                per_port_aggregation[ctx->inv_port_map[tx_port]][port_count++] = packet.mbuf;
+                struct ether_hdr *ethh = rte_pktmbuf_mtod(packet.mbuf, struct ether_hdr *);
                 ether_addr_copy(&ethh->s_addr, &ethh->d_addr);
-                ether_addr_copy(&ctx->ports[packet->tx_port].addr, &ethh->s_addr);
+                ether_addr_copy(&ctx->ports[ctx->inv_port_map[packet.tx_port]].addr, &ethh->s_addr);
             }
             total_recv_cnt += recv_cnt;
-            ctx->port_stats[port_idx].num_recv_pkts += recv_cnt;
+            ctx->port_stats[ctx->inv_port_map[port_idx]].num_recv_pkts += recv_cnt;
         }
-#endif
+#endif /* OFFLOAD_NOOP */
         for ( int iport = 0; iport < ctx->num_tx_ports; iport++ ) {
+            int port_idx = ctx->txq_port_indexes[iport];
             int& to_send = per_port_aggregation_count[iport];
             //log_io(tid, "Port %d: %d packets to tx\n", iport, to_send);
             assert ( to_send <= KNAPP_MAX_OFFLOADS_IN_FLIGHT * (int) ctx->offload_batch_size );
-            int total_sent_pkts = 0;
+            for ( int ipkt = 0; ipkt < to_send; ipkt++ ) {
+                ctx->port_stats[iport].num_sent_bytes
+                    += (rte_pktmbuf_pkt_len(per_port_aggregation[iport][ipkt]) + 24);
+            }
+            ctx->port_stats[iport].num_sent_pkts += to_send;
+            int next_tx_offset = 0;
             while ( to_send > 0 ) {
-                int sent = rte_eth_tx_burst(iport, ctx->my_cfg_cpu, per_port_aggregation[iport] + total_sent_pkts, to_send);
-                //log_io(tid, "Port %d: sent %d packets (to_send: %d)\n", iport, sent, to_send);
-                to_send -= sent;
-                for ( int ipkt = 0; ipkt < sent; ipkt++ ) {
-                    ctx->port_stats[iport].num_sent_bytes 
-                        += (rte_pktmbuf_pkt_len(per_port_aggregation[iport][total_sent_pkts + ipkt]) + 24);
+                int next_tx_batchsize = RTE_MIN(ctx->io_batch_size, to_send);
+                int sent = rte_eth_tx_burst(port_idx, ctx->my_cfg_cpu, per_port_aggregation[iport] + next_tx_offset, next_tx_batchsize);
+                ctx->port_stats[iport].num_sent_pkts -= (next_tx_batchsize - sent);
+                for ( int ipkt = next_tx_offset + sent; ipkt < next_tx_offset + next_tx_batchsize; ipkt++ ) {
+                    struct rte_mbuf *not_sent = per_port_aggregation[iport][ipkt];
+                    ctx->port_stats[iport].num_sent_bytes -= (rte_pktmbuf_pkt_len(not_sent) + 24);
+                    rte_pktmbuf_free(not_sent);
                 }
-                total_sent_pkts += sent;
-                ctx->port_stats[iport].num_sent_pkts += sent;
+                to_send -= next_tx_batchsize;
+                next_tx_offset += next_tx_batchsize;
             }
             assert ( to_send == 0 );
         }
@@ -647,17 +660,17 @@ static void load_config(std::string& filename) {
     uint16_t local_node;
     std::locale locale;
     std::vector<int> remote_scif_nodes;
-    int num_scif_nodes = scif_get_nodeIDs(scif_nodes, 32, &local_node);
 #ifndef OFFLOAD_NOOP
+    int num_scif_nodes = scif_get_nodeIDs(scif_nodes, 32, &local_node);
     if ( num_scif_nodes == 1 ) {
         rte_exit(EXIT_FAILURE, "Error - no coprocessors found\n");
     }
-#endif
     for ( int i = 0; i < num_scif_nodes; i++ ) {
         if ( local_node != scif_nodes[i] ) {
             remote_scif_nodes.push_back(scif_nodes[i]);
         }
     }
+#endif
     log_info("%d SCIF peer nodes detected.\n", (int)remote_scif_nodes.size());
     struct rte_eth_conf port_conf;
     memset(&port_conf, 0, sizeof(port_conf));
@@ -701,8 +714,8 @@ static void load_config(std::string& filename) {
     tx_conf.tx_thresh.hthresh = 4;
     tx_conf.tx_thresh.wthresh = 0;
     /* The following rs_thresh and flag value enables "simple TX" function. */
-    tx_conf.tx_rs_thresh   = 32;
-    tx_conf.tx_free_thresh = 0;  /* use PMD default value */
+    tx_conf.tx_rs_thresh   = 64;
+    tx_conf.tx_free_thresh = 64;  /* use PMD default value */
     tx_conf.txq_flags      = ETH_TXQ_FLAGS_NOMULTSEGS | ETH_TXQ_FLAGS_NOOFFLOADS;
 
     const uint32_t num_mp_cache = 512;
@@ -735,7 +748,7 @@ static void load_config(std::string& filename) {
         std::vector<struct io_context *> io_ctxs(KNAPP_MAX_IO_CONTEXTS_PER_NODE, NULL);
         // Local means NUMA node-local in this context
         std::map<int, std::pair<int, int> > to_rte_rxq; // Maps queue id from configuration to (global port id, ring_idx) pair
-        std::map<std::pair<int, int>, int> to_cfg_rxq;  // Maps 
+        std::map<std::pair<int, int>, int> to_cfg_rxq;  // Maps
         std::map<int, int> to_rte_port;
         std::map<int, int> to_cfg_port;
         resolve_mapping(TO_PARAM(config[node], rx_queues_to_ports));
@@ -753,7 +766,7 @@ static void load_config(std::string& filename) {
         Json::Value& acc_configs = config[node]["accelerator_threads"];
         assert ( acc_configs.size() == 1 );
         actx = (struct offload_context *) rte_malloc_socket("offload_context", sizeof(struct offload_context), RTE_CACHE_LINE_SIZE, node);
-        
+
         {
             // Initialize accelerator threads
             // FIXME: 1 device, 1 offload thread. Need to fix this in the future!
@@ -776,20 +789,21 @@ static void load_config(std::string& filename) {
                 assert ( dedicated_cores.size() == 1 );
                 actx->my_node = node;
                 actx->my_cpu = knapp_pcore_to_lcore(node, dedicated_cores[0], num_cpus_per_node);
-                actx->my_cfg_cpu = i_acc;
+                actx->my_cfg_cpu = dedicated_cores[0];
                 actx->my_cfg_tid = i_acc;
                 offload_contexts[actx->my_cpu] = actx;
-                
+
                 actx->init_barrier = offload_init_barrier;
                 actx->offload_batch_size = offload_batch_size;
                 actx->offload_threshold = offload_threshold;
-                
+
                 //actx->serialized_mempool = (struct buffer_pool *) rte_malloc_socket("bp_struct", sizeof(struct buffer_pool), RTE_CACHE_LINE_SIZE, node);
                 //assert ( actx->serialized_mempool != NULL );
                 //actx->serialized_mempool->init(KNAPP_MAX_OFFLOADS_IN_FLIGHT, KNAPP_ETH_MAX_BYTES_ALIGNED * actx->offload_batch_size, node);
 
                 new (&actx->vdevs) FixedRing<struct vdevice *, nullptr>(KNAPP_MAX_VDEVICES_PER_NODE, node);
-                
+
+                #ifndef OFFLOAD_NOOP
                 Json::Value& vdevices = acc_config["vdevices"];
                 for ( unsigned i = 0; i < vdevices.size(); i++ ) {
                     Json::Value& vdev_config = vdevices[i];
@@ -839,7 +853,7 @@ static void load_config(std::string& filename) {
                         scif_connect_with_retry(vdev);
 #endif
                         pollring_init(&vdev->poll_ring, vdev->pipeline_depth, vdev->data_epd, node);
-                        
+
                         new (&vdev->cores) FixedRing<int, -1>(KNAPP_MAX_CORES_PER_DEVICE, node);
                         std::vector<int> offload_cores;
                         get_list(vdev_config["offload_cores"], offload_cores);
@@ -867,24 +881,26 @@ static void load_config(std::string& filename) {
                         actx->vdevs.push_back(vdev);
                     }
                 }
-                
+                #endif /* !OFFLOAD_NOOP */
+
                 //new (&actx->tasks_in_mic) FixedRing<struct offload_task *, nullptr>(64, node);
-                // Each ACC ctx gets handle to 
-                    // a) input queue that it needs to take from, 
+                // Each ACC ctx gets handle to
+                    // a) input queue that it needs to take from,
                     // b) completion queues that it needs to feed,
                     // c) and IO threads that it needs to wake
 
                 // Event loop initialization for ACC threads
-                actx->offload_input_watcher = (struct ev_async *) 
+                actx->offload_input_watcher = (struct ev_async *)
                             rte_malloc_socket("ev_async", sizeof(struct ev_async), RTE_CACHE_LINE_SIZE, node);
                 ev_async_init(actx->offload_input_watcher, threadsync_failed_cb); // FIXME: confirm if it's the right way to init this
                 //actx->offload_complete_watcher = (struct ev_async *) rte_malloc_socket("ev_async", sizeof(struct ev_async), RTE_CACHE_LINE_SIZE, node);
-                actx->terminate_watcher = (struct ev_async *) 
+                actx->terminate_watcher = (struct ev_async *)
                             rte_malloc_socket("ev_async", sizeof(struct ev_async), RTE_CACHE_LINE_SIZE, node);
                 ev_async_init(actx->terminate_watcher, NULL);
                 knapp_bind_cpu(actx->my_cpu);
                 pthread_yield();
                 assert ( 0 == pthread_create(&actx->my_thread, NULL, offload_loop, (void *) actx) );
+                knapp_bind_cpu(0);
             } // End of per-ACC_thread initialization
         } // End of ACC threads initialization
         // Run the loop over devices first and setup the mapping between config-indexes and rte-indexes
@@ -907,9 +923,13 @@ static void load_config(std::string& filename) {
                 to_rte_rxq[rxqs_pointing_to[cnt]] = std::make_pair(port_idx, cnt);
                 to_cfg_rxq[std::make_pair(port_idx, cnt)] = rxqs_pointing_to[cnt];
             }
+            if ( num_rx_queues_to_port == 0 ) {
+                log_info("No rx queues for port %d, passing through...\n", port_idx);
+                continue;
+            }
             log_info("Port %d holds %d rxqs and %d txqs\n", port_idx, num_rx_queues_to_port, num_txq_per_port);
             assert(0 == rte_eth_dev_configure(port_idx, num_rx_queues_to_port, num_txq_per_port, &port_conf));
-            /* Initialize TX queues. */ 
+            /* Initialize TX queues. */
             /* legacy code from pspgen is usable in this block */
             log_info("Setting up %d tx queues for port %d\n", num_txq_per_port, port_idx);
             for (ring_idx = 0; ring_idx < num_txq_per_port; ring_idx++) {
@@ -977,8 +997,8 @@ static void load_config(std::string& filename) {
         }
         per_node_stats[node] = (struct io_node_stat *) rte_malloc_socket("io_node_stat", sizeof(struct io_node_stat), RTE_CACHE_LINE_SIZE, node);
         per_node_stats[node]->node_id = node;
-        //per_node_stats[node]->num_ports = num_ports_per_node[node];
-        per_node_stats[node]->num_ports = num_devices_registered;
+        per_node_stats[node]->num_ports = num_ports_per_node[node];
+        //per_node_stats[node]->num_ports = num_devices_registered;
         // FIXME: NOTE THIS DIFFERENCE.
         per_node_stats[node]->last_time = 0;
         for (unsigned j = 0; j < per_node_stats[node]->num_ports; j++) {
@@ -1026,11 +1046,11 @@ static void load_config(std::string& filename) {
             ctx->new_packet_mempool = rte_mempool_create(mpname, ctx->offload_batch_size * KNAPP_MAX_OFFLOADS_IN_FLIGHT, sizeof(struct packet), 0, 0, NULL, NULL, NULL, NULL, node, 0);
             assert( ctx->new_packet_mempool != NULL );
 
-            
-            
+
+
             snprintf(mpname, RTE_MEMPOOL_NAMESIZE, "offbatch-n%d-lc%d", (int)ctx->my_node, (int)ctx->my_cpu);
-            ctx->offload_batch_mempool = rte_mempool_create(mpname, KNAPP_MAX_OFFLOADS_IN_FLIGHT, 
-                    sizeof(struct packet *) * ctx->offload_batch_size, 51, 0, 
+            ctx->offload_batch_mempool = rte_mempool_create(mpname, KNAPP_MAX_OFFLOADS_IN_FLIGHT,
+                    sizeof(struct packet *) * ctx->offload_batch_size, 51, 0,
                     NULL, NULL, NULL, NULL, node, 0);
             if ( ctx->offload_batch_mempool == NULL ) {
                 fprintf(stderr, "rte_mempool_create: %s\n", rte_strerror(rte_errno));
@@ -1038,8 +1058,8 @@ static void load_config(std::string& filename) {
             }
 
             //snprintf(mpname, RTE_MEMPOOL_NAMESIZE, "offtask-n%d-lc%d", (int)ctx->my_node, (int)ctx->my_cpu);
-            //ctx->offload_task_mempool = rte_mempool_create(mpname, KNAPP_MAX_OFFLOADS_IN_FLIGHT, 
-                    //sizeof(struct offload_task), 50, 0, 
+            //ctx->offload_task_mempool = rte_mempool_create(mpname, KNAPP_MAX_OFFLOADS_IN_FLIGHT,
+                    //sizeof(struct offload_task), 50, 0,
                     //NULL, NULL, NULL, NULL, node, 0);
             //assert ( ctx->offload_task_mempool != NULL );
 
@@ -1055,7 +1075,7 @@ static void load_config(std::string& filename) {
                     int port_idx = rte_rxq.first;
                     int ring_idx = rte_rxq.second;
                     unique_rx_ports.push_back(port_idx);
-                    
+
                     ctx->rxq_port_indexes[i] = port_idx;
                     ctx->rxq_indexes[i] = ring_idx;
                     ctx->rx_mempools[i] = rx_mempools[port_idx][ring_idx];
@@ -1063,18 +1083,15 @@ static void load_config(std::string& filename) {
                 std::sort(unique_rx_ports.begin(), unique_rx_ports.end());
                 unique_rx_ports.erase(std::unique(unique_rx_ports.begin(), unique_rx_ports.end()), unique_rx_ports.end());
                 ctx->num_rx_ports = unique_rx_ports.size();
-                
+
                 // Capture 'TX-queue to io-core' mapping
                 ctx->num_tx_ports = num_ports_per_node[node];
                 ctx->num_ports = num_devices_registered;
-                for ( unsigned i_port = 0; i_port < ctx->num_ports; i_port++ ) {
-                    ctx->ports[i_port].port_idx = i_port;
-                    rte_eth_macaddr_get(i_port, &ctx->ports[i_port].addr);
-                }
+                
                 ctx->num_tx_queues = num_ports_per_node[node];
                 memset(ctx->inv_port_map, -1, sizeof(ctx->inv_port_map));
                 for (int i_txport = 0; i_txport < num_ports_per_node[node]; i_txport++) {
-                    // A tx-queue per i/o core for each port. 
+                    // A tx-queue per i/o core for each port.
                     // Therefore, num_ports == num_tx_queues_per_io_core
                     int port_idx = port_indexes_per_node[node][i_txport];
                     int ring_idx = i_cpu;
@@ -1083,6 +1100,24 @@ static void load_config(std::string& filename) {
                     ctx->inv_port_map[port_idx] = i_txport;
                     //ctx->tx_mempools[i_txport] = tx_mempools[port_idx][ring_idx];
                 }
+                for ( unsigned i_port = 0; i_port < ctx->num_ports; i_port++ ) {
+                    ctx->ports[i_port].port_idx = i_port;
+                    rte_eth_macaddr_get(ctx->txq_port_indexes[i_port], &ctx->ports[i_port].addr);
+                }
+                /*
+                fprintf(stderr, "thread %d inv_port_map: [ ", ctx->my_cfg_cpu);
+                for (int itx = 0; itx < 8; itx++) {
+                    fprintf(stderr, "(%d->%d) ", itx, ctx->inv_port_map[itx]);
+                }
+                fprintf(stderr, "\n");
+
+                fprintf(stderr, "thread %d txq_port_indexes: [ ", ctx->my_cfg_cpu);
+                for (int itx = 0; itx < 8; itx++) {
+                    fprintf(stderr, "(%d->%d) ", itx, ctx->txq_port_indexes[itx]);
+                }
+                fprintf(stderr, "\n");
+                */
+
             }
             {
                 new (&ctx->offload_task_q) FixedRing<struct offload_task *, nullptr>(KNAPP_OFFLOAD_TASKQ_SIZE, node);
@@ -1116,10 +1151,10 @@ int main(int argc, char **argv)
 {
     unsigned loglevel = RTE_LOG_WARNING;
     int ret;
-    
+
     int num_nodes = numa_num_configured_nodes();
     char threads_conf_filename[MAX_PATH] = "config.json";
-    
+
     uint64_t begin, end;
     time_t rawtime;
     std::locale locale;
@@ -1253,7 +1288,7 @@ int main(int argc, char **argv)
     printf("# of CPUs = %d\n", num_cpus);
     printf("I/O batch size = %d\n", io_batch_size);
     printf("Offload batch size = %d\n", offload_batch_size);
-    
+
     printf("Interfaces: ");
     for (int i = 0; i < num_devices_registered; i++) {
         if (i > 0)
@@ -1266,7 +1301,7 @@ int main(int argc, char **argv)
 
     std::string threads_conf_filename_in_string(threads_conf_filename);
     load_config(threads_conf_filename_in_string);
-    
+
     /* Spawn threads and send packets. */
     signal(SIGINT, handle_signal);
     signal(SIGTERM, handle_signal);

@@ -5,7 +5,9 @@
 #include <map>
 #include <string>
 #include <pthread.h>
+#ifndef OFFLOAD_NOOP
 #include <scif.h>
+#endif
 #include <cassert>
 //#include <linux/ip.h>
 #include <arpa/inet.h>
@@ -22,7 +24,7 @@
 #include <stdatomic.h>
 #include <linux/ip.h>
 
-#else 
+#else
 #define CACHE_LINE_SIZE 64
 #define RTE_LOGTYPE_MAIN RTE_LOGTYPE_USER1
 #include <numa.h>
@@ -264,7 +266,7 @@ struct io_context {
     int num_rx_queues;
     struct rte_mempool *rx_mempools[KNAPP_MAX_QUEUES_PER_THREAD];
     struct rte_mempool *new_packet_mempool;
-    
+
     int port_map[KNAPP_MAX_PORTS];
     int inv_port_map[KNAPP_MAX_PORTS];
 
@@ -291,14 +293,14 @@ struct io_context {
     struct ev_loop *    evloop;
     struct ev_async *    terminate_watcher;
     //struct ev_async *    finished_task_watcher;
-    
+
     struct rte_ring *drop_queue;
     struct rte_ring *offload_completion_queue;
     int cur_vdev_index;
     int cur_task_id;
     FixedRing<struct vdevice *, nullptr> vdevs;
     FixedRing<struct offload_task *, nullptr> offload_task_q;
-    
+
     struct offload_task *cur_offload_task;
 
     struct rte_mempool *offload_batch_mempool;
@@ -308,8 +310,8 @@ struct io_context {
 
 struct offload_context {
     int                    my_node;
-    int                    my_cpu; 
-    int                    my_cfg_tid; 
+    int                    my_cpu;
+    int                    my_cfg_tid;
     int                    my_cfg_cpu; // 0-based cpu index per node
     //FIXME: Max # of acc threads is only one per offload_context (pinned to a single core) at this time
     pthread_t            my_thread;
@@ -390,7 +392,7 @@ struct worker {
     struct vdevice *vdev;
     Barrier *data_ready_barrier;
     Barrier *task_done_barrier;
-    
+
     knapp_proto_t workload_type;
     uint8_t *inputbuf;
     uint32_t inputbuf_len;
@@ -438,8 +440,10 @@ struct vdevice {
     int device_id;
     int ht_per_core;     /* hyperthreads per core, ranged 1 ~ 4 */
     knapp_proto_t workload_type;
+#ifndef OFFLOAD_NOOP
     scif_epd_t data_epd;
     scif_epd_t ctrl_epd;
+#endif
     uint8_t *ctrlbuf;
     uint32_t pipeline_depth;
     uint64_t inputbuf_size;
@@ -467,18 +471,20 @@ struct vdevice {
     union u_worker u;
     std::atomic<bool> exit;
     std::vector<int> cores;
-#else
+#else /* __MIC__ */
     FixedRing<int, -1> cores;
     struct offload_task *tasks_in_flight;
     int next_poll;
     struct bufarray offloadbuf_array;
     struct bufarray resultbuf_array;
-#endif
+#endif /* !__MIC__ */
+#ifndef OFFLOAD_NOOP
     struct scif_portID remote_dataport;
     struct scif_portID remote_ctrlport;
     struct scif_portID local_dataport;
     struct scif_portID local_ctrlport;
-    
+#endif
+
     struct poll_ring poll_ring;
 
     off_t remote_writebuf_base_ra;

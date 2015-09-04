@@ -1,3 +1,4 @@
+#ifndef OFFLOAD_NOOP
 #include "offloadtask.hh"
 
 static size_t serialize_ipv4(uint8_t *scif_payload, struct packet **pkts, unsigned n) {
@@ -74,3 +75,4 @@ pktprocess_result_t offload_task::offload_postproc(int index) {
     return CONTINUE;
 #endif
 }
+#endif /* !OFFLOAD_NOOP */

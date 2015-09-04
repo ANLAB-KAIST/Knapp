@@ -117,6 +117,7 @@ void log_offload(int tid, const char *format, ... );
 void log_io(int tid, const char *format, ... );
 void init_global_refdata();
 
+#ifndef OFFLOAD_NOOP
 int bufarray_init(struct bufarray *ba, uint32_t n, uint64_t elem_size, size_t align
 #ifdef __MIC__
 		);
@@ -153,7 +154,6 @@ inline void *__attribute__ ((always_inline)) bufarray_get_va_from_index(uint8_t 
 }
 
 
-
 #ifdef __MIC__
 int pollring_init(struct poll_ring *r, int32_t n, scif_epd_t epd);
 #else
@@ -187,7 +187,7 @@ pollring_free_count(struct poll_ring *r) {
 	// Return the number of available task ids
 	return rte_ring_count(r->id_pool);
 }
-#endif
+#endif /* !__MIC__ */
 
 #ifdef __MIC__
 inline void *mem_alloc(size_t sz, size_t align) {
@@ -200,19 +200,11 @@ inline void *mem_alloc(size_t sz, size_t align, int numa_node) {
 	//return rc == 0 ? ret : NULL;
 	return rte_zmalloc_socket("generic", sz, align, numa_node);
 }
-#endif
+#endif /* !__MIC__ */
+#endif /* !OFFLOAD_NOOP */
 void log_device(int vdevice_id, const char *format, ... );
 
-#ifndef __MIC__
-void send_ctrlmsg(scif_epd_t epd, uint8_t *buf, ctrl_msg_t msg, void *p1, void *p2, void *p3, void *p4);
-int knapp_bind_cpu(int cpu);
-int knapp_num_hyperthreading_siblings(void);
-int knapp_get_num_cpus(void);
-inline int knapp_pcore_to_lcore(int numa_node, int pcore_id, int num_cores_per_node) {
-	//FIXME: Sandybridge assumption. Generalize?
-	return numa_node * num_cores_per_node + pcore_id;
-}
-#else
+#ifdef __MIC__
 void log_worker(int tid, const char *format, ... );
 int get_least_utilized_ht(int pcore);
 void init_worker_refdata(struct vdevice *vdev);
@@ -223,12 +215,31 @@ void build_vdevice(Json::Value& conf, struct vdevice **pvdev);
 void rte_exit(int ec, const char *format, ... );
 void rte_panic(const char *format, ... );
 
-
 inline int mic_pcore_to_lcore(int pcore, int ht) {
 	return (pcore * MAX_THREADS_PER_CORE + ht + 1) % (NUM_CORES * MAX_THREADS_PER_CORE);
 }
-
+#else /* __MIC__ */
+#ifndef OFFLOAD_NOOP
+void send_ctrlmsg(scif_epd_t epd, uint8_t *buf, ctrl_msg_t msg, void *p1, void *p2, void *p3, void *p4);
 #endif
+int knapp_bind_cpu(int cpu);
+int knapp_num_hyperthreading_siblings(void);
+int knapp_get_num_cpus(void);
+inline int knapp_pcore_to_lcore(int numa_node, int pcore_id, int num_cores_per_node) {
+	//FIXME: Sandybridge assumption. Generalize?
+	int nb_cpus = numa_num_configured_cpus();
+        for ( int icpu = 0, cpu_per_node = 0; icpu < nb_cpus; icpu++ ) {
+	    int node = numa_node_of_cpu(icpu);
+	    if ( node == numa_node ) {
+		if ( pcore_id == cpu_per_node ) {
+		    return icpu;
+		}
+		cpu_per_node++;
+	    }
+        }
+        return -1;
+}
+#endif /* !__MIC__ */
 void scif_connect_with_retry(struct vdevice *vdev);
 int get_num_sources(std::vector<struct mapping>& vec);
 int get_num_destinations(std::vector<struct mapping>& vec);
