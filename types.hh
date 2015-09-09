@@ -47,6 +47,9 @@
 #include <rte_ip.h>
 #include <rte_udp.h>
 #include "queue.hh"
+#ifndef OFFLOAD_NOOP
+#include <scif.h>
+#endif
 
 #endif
 

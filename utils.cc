@@ -940,7 +940,6 @@ void log_device(int vdevice_id, const char *format, ... ) {
 }
 
 
-#ifndef OFFLOAD_NOOP
 #ifdef __MIC__
 extern int core_util[][MAX_THREADS_PER_CORE];
 
@@ -1127,7 +1126,6 @@ void send_ctrlresp(scif_epd_t epd, uint8_t *buf, ctrl_msg_t msg_recvd, void *p1,
     }
     //log_info("Sent %d bytes as ctrl resp (SUCCESS)\n", KNAPP_OFFLOAD_CTRLBUF_SIZE);
 }
-#endif /* !OFFLOAD_NOOP */
 #else /* __MIC__ */
 int knapp_num_hyperthreading_siblings(void) {
     // TODO: make it portable

@@ -353,6 +353,7 @@ void *offload_loop(void *arg) {
             uint64_t volatile *local_pollring = vdev->poll_ring.ring;
             int next_poll = vdev->next_poll;
             compiler_fence();
+			int rc;
             if ( local_pollring[next_poll] == KNAPP_OFFLOAD_COMPLETE ) {
                 struct offload_task *ot = &vdev->tasks_in_flight[next_poll];
                 local_pollring[next_poll] = KNAPP_COPY_PENDING;
@@ -468,10 +469,9 @@ int io_loop(void *arg)
 
             for ( unsigned k = 0; k < recv_cnt; k++ ) {
                 struct rte_mbuf *cur_pkt = pkts[total_recv_cnt + k];
-                ctx->port_stats[ctx->inv_port_map[port_idx]].num_recv_bytes += (rte_pktmbuf_pkt_len(cur_pkt) + 24);
+				int node_local_port = ctx->inv_port_map[port_idx];
+                ctx->port_stats[node_local_port].num_recv_bytes += (rte_pktmbuf_pkt_len(cur_pkt) + 24);
                 struct packet *packet = ctx->cur_offload_task->get_tail();
-                int rx_cfg_port = ctx->inv_port_map[port_idx];
-                assert ( rx_cfg_port != -1 );
                 packet->rx_port = port_idx;
                 packet->rx_ring = ring_idx;
                 packet->tx_port = port_idx;
@@ -499,7 +499,8 @@ int io_loop(void *arg)
                     ti->input_size = sendbuf_len;
                     ti->num_packets = num_pkts;
                     //assert ( 0 == scif_writeto(vdev->data_epd, host_taskitem_ra, sizeof(struct taskitem), remote_taskitem_ra, 0) );
-                    ot->mark_offload_start();
+					// TODO: Revive this for timestamping
+                    //ot->mark_offload_start();
                     if ( 0 != scif_writeto(vdev->data_epd, hostbuf_ra, sendbuf_len, remote_inputbuf_ra, 0) ) {
                         log_device(vdev->device_id, "scif_writeto: %s\n"
                                 "(epd: %d, hostbuf_ra: %ld, sendbuf_len: %d, remote_ra: %ld, task_id: %d)\n", strerror(errno), vdev->data_epd, hostbuf_ra, sendbuf_len, remote_inputbuf_ra, poll_id);
@@ -543,12 +544,13 @@ int io_loop(void *arg)
                         drop_pkts[drop_cnt++] = packet->mbuf;
                     } else if ( result == CONTINUE ) {
                         int tx_port = packet->tx_port;
-                        assert ( tx_port < ctx->num_tx_ports );
-                        int& port_count = per_port_aggregation_count[tx_port];
-                        per_port_aggregation[ctx->inv_port_map[tx_port]][port_count++] = packet->mbuf;
+						int node_local_port = ctx->inv_port_map[tx_port];
+                        assert ( node_local_port < ctx->num_tx_ports );
+                        int& port_count = per_port_aggregation_count[node_local_port];
+                        per_port_aggregation[node_local_port][port_count++] = packet->mbuf;
                         struct ether_hdr *ethh = rte_pktmbuf_mtod(packet->mbuf, struct ether_hdr *);
                         ether_addr_copy(&ethh->s_addr, &ethh->d_addr);
-                        ether_addr_copy(&ctx->ports[ctx->inv_port_map[packet->tx_port]].addr, &ethh->s_addr);
+                        ether_addr_copy(&ctx->ports[node_local_port].addr, &ethh->s_addr);
                     } else {
                         log_io(tid, "Error - unknown packet process result type: %d\n", (int) result);
                     }
