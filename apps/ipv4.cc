@@ -57,8 +57,8 @@ void *app_ipv4(void *arg) {
                     double mean_xfer = (acc_batch_transfer_us / (double) total_batches_processed);
                     double mean_xfer_sq = (acc_batch_transfer_us_sq / (double) total_batches_processed);
                     double xfer_var = mean_xfer_sq - (mean_xfer * mean_xfer);
-                    log_device(vdev->device_id, "%llu batches processed at %.2lf Mpps, batch proc time: (%.2lf us, var %.2lf), xfer time: (%.2lf us, var %.2lf)\n",
-                            total_batches_processed, total_packets_processed / (double)tdiff, mean_proc, proc_var, mean_xfer, xfer_var);
+                    /*log_device(vdev->device_id, "%llu batches processed at %.2lf Mpps, batch proc time: (%.2lf us, var %.2lf), xfer time: (%.2lf us, var %.2lf)\n",
+                            total_batches_processed, total_packets_processed / (double)tdiff, mean_proc, proc_var, mean_xfer, xfer_var);*/
                     total_batches_processed = 0;
                     total_packets_processed = 0;
                     acc_batch_process_us = 0;
