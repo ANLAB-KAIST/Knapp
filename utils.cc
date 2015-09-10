@@ -811,6 +811,7 @@ void build_vdevice(Json::Value& conf, struct vdevice **pvdev) {
     struct vdevice *vdev = *pvdev;
     memset(vdev, 0, sizeof(vdevice));
     vdev->exit = false;
+	vdev->first_entry = true;
     uint16_t local_node;
     int num_scif_nodes = scif_get_nodeIDs(scif_nodes, 32, &local_node);
     vdev->device_id = global_vdevice_counter++;
@@ -842,6 +843,7 @@ void build_vdevice(Json::Value& conf, struct vdevice **pvdev) {
     vdev->num_worker_threads = vdev->cores.size() * vdev->ht_per_core;
     //vdev->data_ready_barrier = new Barrier(vdev->num_worker_threads);
     //vdev->task_done_barrier = new Barrier(vdev->num_worker_threads);
+    vdev->next_task_id = 0;
     vdev->cur_task_id = 0;
     vdev->ctrlbuf = (uint8_t *) mem_alloc(KNAPP_OFFLOAD_CTRLBUF_SIZE, CACHE_LINE_SIZE);
     assert ( vdev->ctrlbuf != NULL );
@@ -1126,6 +1128,83 @@ void send_ctrlresp(scif_epd_t epd, uint8_t *buf, ctrl_msg_t msg_recvd, void *p1,
     }
     //log_info("Sent %d bytes as ctrl resp (SUCCESS)\n", KNAPP_OFFLOAD_CTRLBUF_SIZE);
 }
+
+void worker_preproc(int tid, struct vdevice *vdev) {
+	struct worker *w = &vdev->per_thread_work_info[vdev->next_task_id][tid];
+	if ( tid != 0 ) {
+		w->data_ready_barrier->here(tid);
+		return;
+	}
+    uint64_t volatile *pollring = vdev->poll_ring.ring;
+	int32_t task_id = vdev->next_task_id;
+	vdev->cur_task_id = task_id;
+	compiler_fence();
+	while ( pollring[task_id] != KNAPP_TASK_READY ) {
+		insert_pause();
+	}
+
+    if ( (vdev->total_batches_processed % VDEV_PROFILE_INTERVAL == 0) || vdev->first_entry ) {
+		if ( vdev->first_entry ) {
+			vdev->ts_laststat = knapp_get_usec();
+			vdev->first_entry = false;
+		} else {
+			vdev->ts_curstat = knapp_get_usec();
+			uint64_t tdiff = vdev->ts_curstat - vdev->ts_laststat;
+			double mean_proc = (vdev->acc_batch_process_us / (double) vdev->total_batches_processed);
+			double mean_proc_sq = (vdev->acc_batch_process_us_sq / (double) vdev->total_batches_processed);
+			double proc_var = mean_proc_sq - (mean_proc * mean_proc);
+			double mean_xfer = (vdev->acc_batch_transfer_us / (double) vdev->total_batches_processed);
+			double mean_xfer_sq = (vdev->acc_batch_transfer_us_sq / (double) vdev->total_batches_processed);
+			double xfer_var = mean_xfer_sq - (mean_xfer * mean_xfer);
+			/*log_device(vdev->device_id, "%llu batches processed at %.2lf Mpps, batch proc time: (%.2lf us, var %.2lf), xfer time: (%.2lf us, var %.2lf)\n",
+					vdev->total_batches_processed, vdev->total_packets_processed / (double)tdiff, mean_proc, proc_var, mean_xfer, xfer_var);*/
+			vdev->total_batches_processed = 0;
+			vdev->total_packets_processed = 0;
+			vdev->acc_batch_process_us = 0;
+			vdev->acc_batch_process_us_sq = 0;
+			vdev->acc_batch_transfer_us = 0;
+			vdev->acc_batch_transfer_us_sq = 0;
+			vdev->ts_laststat = vdev->ts_curstat;
+		}
+	}
+	compiler_fence();
+	pollring[task_id] = KNAPP_COPY_PENDING;
+	vdev->ts_batch_begin = knapp_get_usec();
+	w->data_ready_barrier->here(0);
+	vdev->next_task_id = (task_id + 1) % (vdev->poll_ring.len);
+}
+
+void worker_postproc(int tid, struct vdevice *vdev) {
+	// At this point, next_task_id has already advanced by one, cur_task_id is correct
+	int task_id = vdev->cur_task_id;
+	struct worker *w = &vdev->per_thread_work_info[task_id][tid];
+	w->task_done_barrier->here(tid);
+	if ( tid != 0 ) {
+		return;
+	}
+	vdev->ts_batch_end = knapp_get_usec();
+	uint64_t batch_proc_us = (vdev->ts_batch_end - vdev->ts_batch_begin);
+	vdev->acc_batch_process_us += batch_proc_us;
+	vdev->acc_batch_process_us_sq += (batch_proc_us * batch_proc_us);
+	int num_packets_in_cur_task = vdev->num_packets_in_cur_task;
+	vdev->total_batches_processed++;
+	vdev->total_packets_processed += num_packets_in_cur_task;
+	uint8_t *resultbuf_va = bufarray_get_va(&vdev->resultbuf_array, task_id);
+	off_t resultbuf_ra = bufarray_get_ra(&vdev->resultbuf_array, task_id);
+	off_t writeback_ra = bufarray_get_ra_from_index(vdev->remote_writebuf_base_ra, vdev->resultbuf_size, PAGE_SIZE, task_id);
+	compiler_fence();
+	int32_t pktproc_res_size = get_result_size(vdev->workload_type, num_packets_in_cur_task);
+	struct offload_task_tailroom *tailroom = (struct offload_task_tailroom *)(resultbuf_va + pktproc_res_size);
+	tailroom->ts_proc_begin = vdev->ts_batch_begin;
+	tailroom->ts_proc_end = vdev->ts_batch_end;
+	uint64_t ts_xfer_begin = knapp_get_usec();
+	assert ( 0 == scif_writeto(vdev->data_epd, resultbuf_ra, pktproc_res_size, writeback_ra, 0) );
+	assert ( 0 == scif_fence_signal(vdev->data_epd, 0, 0, vdev->remote_poll_ring_window + sizeof(uint64_t) * task_id, KNAPP_OFFLOAD_COMPLETE, SCIF_FENCE_INIT_SELF | SCIF_SIGNAL_REMOTE) );
+	uint64_t xfer_diff = knapp_get_usec() - ts_xfer_begin;
+	vdev->acc_batch_transfer_us += xfer_diff;
+	vdev->acc_batch_transfer_us_sq += (xfer_diff * xfer_diff);
+}
+
 #else /* __MIC__ */
 int knapp_num_hyperthreading_siblings(void) {
     // TODO: make it portable

@@ -120,7 +120,7 @@
 #define KNAPP_MIC_DATAPORT_BASE        2250
 #define KNAPP_MIC_CTRLPORT_BASE        2350
 
-typedef void *(*worker_func_t)(void *arg);
+typedef void (*worker_func_t)(struct worker *work);
 
 typedef enum {
     OP_SET_WORKLOAD_TYPE, // Followed by workload type identifier (4B)
@@ -410,6 +410,12 @@ struct worker {
     union u_worker u;
 } CACHE_ALIGNED;
 
+struct worker_thread_info {
+	int thread_id;
+	struct vdevice *vdev;
+	worker_func_t pktproc_func;
+} CACHE_ALIGNED;
+
 #endif
 
 struct taskitem {
@@ -457,8 +463,10 @@ struct vdevice {
     Barrier **task_done_barriers;
     pthread_t master_thread;
     pthread_t *worker_threads;
+	struct worker_thread_info *thread_info_array;
     int master_cpu;
     int num_worker_threads;
+	int next_task_id;
     int cur_task_id;
     int num_packets_in_cur_task;
 
@@ -474,6 +482,20 @@ struct vdevice {
     union u_worker u;
     std::atomic<bool> exit;
     std::vector<int> cores;
+
+	/* stats-related */
+	bool first_entry;
+	uint64_t ts_laststat;
+	uint64_t ts_curstat;
+	uint64_t ts_batch_begin;
+	uint64_t ts_batch_end;
+	uint64_t total_packets_processed;
+	uint64_t total_batches_processed;
+	uint64_t acc_batch_process_us;
+	uint64_t acc_batch_process_us_sq;
+    uint64_t acc_batch_transfer_us;
+    uint64_t acc_batch_transfer_us_sq;
+
 #else /* __MIC__ */
     FixedRing<int, -1> cores;
     struct offload_task *tasks_in_flight;

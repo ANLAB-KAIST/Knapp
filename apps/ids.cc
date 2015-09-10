@@ -1,4 +1,4 @@
 #include "ids.hh"
-void *app_ids(void *arg) {
-	return 0;
+void app_ids(struct worker *arg) {
+
 }

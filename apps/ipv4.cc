@@ -19,104 +19,7 @@ bool g_once = true;
 extern int num_bubble_cycles;
 #endif
 
-void *app_ipv4(void *arg) {
-    struct worker *w = (struct worker *) arg;
-    struct vdevice *vdev = w->vdev;
-    int tid = w->thread_id;
-    uint64_t ts_proc_begin, ts_proc_end;
-    uint64_t total_packets_processed = 0;
-    uint64_t total_batches_processed = 0;
-    uint64_t acc_batch_process_us = 0;
-    uint64_t acc_batch_process_us_sq = 0;
-    uint64_t acc_batch_transfer_us = 0;
-    uint64_t acc_batch_transfer_us_sq = 0;
-    uint64_t ts;
-    //log_device(w->vdev->device_id, "Thread %2d pending new task\n", tid);
-    bool once = true;
-    if ( tid == 0 ) {
-        uint64_t volatile *pollring = vdev->poll_ring.ring;
-        while ( w->exit == false ) {
-            w = &vdev->per_thread_work_info[vdev->cur_task_id][tid];
-            int32_t task_id = vdev->cur_task_id;
-            //log_device(vdev->device_id, "Head worker thread initiated %d\n", tid);
-            compiler_fence();
-            while ( pollring[task_id] != KNAPP_TASK_READY ) {
-                insert_pause();
-            }
-            //log_device(vdev->device_id, "Begin processing task %d\n", task_id);
-            if ( (total_batches_processed % VDEV_PROFILE_INTERVAL == 0) || once ) {
-                if ( once ) {
-                    ts = ts_proc_begin;
-                    once = false;
-                } else {
-                    uint64_t new_ts = ts_proc_begin;
-                    uint64_t tdiff = new_ts - ts;
-                    double mean_proc = (acc_batch_process_us / (double) total_batches_processed);
-                    double mean_proc_sq = (acc_batch_process_us_sq / (double) total_batches_processed);
-                    double proc_var = mean_proc_sq - (mean_proc * mean_proc);
-                    double mean_xfer = (acc_batch_transfer_us / (double) total_batches_processed);
-                    double mean_xfer_sq = (acc_batch_transfer_us_sq / (double) total_batches_processed);
-                    double xfer_var = mean_xfer_sq - (mean_xfer * mean_xfer);
-                    /*log_device(vdev->device_id, "%llu batches processed at %.2lf Mpps, batch proc time: (%.2lf us, var %.2lf), xfer time: (%.2lf us, var %.2lf)\n",
-                            total_batches_processed, total_packets_processed / (double)tdiff, mean_proc, proc_var, mean_xfer, xfer_var);*/
-                    total_batches_processed = 0;
-                    total_packets_processed = 0;
-                    acc_batch_process_us = 0;
-                    acc_batch_process_us_sq = 0;
-                    acc_batch_transfer_us = 0;
-                    acc_batch_transfer_us_sq = 0;
-                    ts = new_ts;
-                }
-            }
-            compiler_fence();
-            pollring[task_id] = KNAPP_COPY_PENDING;
-            ts_proc_begin = knapp_get_usec();
-            w->data_ready_barrier->here(tid);
-            //log_device(vdev->device_id, "Begin processing task %d (%d packets)\n", task_id, w->num_packets);
-            
-            // Shift next task id in advance to avoid data race
-            vdev->cur_task_id = (task_id + 1) % (vdev->poll_ring.len);
-            proc_ipv4(w);
-            //log_device(vdev->device_id, "Finished processing task %d\n", task_id);
-            ts_proc_end = knapp_get_usec();
-            uint64_t batch_proc_us = (ts_proc_end - ts_proc_begin);
-            acc_batch_process_us += batch_proc_us;
-            acc_batch_process_us_sq += (batch_proc_us * batch_proc_us);
-            //log_device(vdev->device_id, "Finished batch (%d pkts)\n", num_packets);
-            int num_packets_in_cur_task = vdev->num_packets_in_cur_task;
-            total_batches_processed++;
-            total_packets_processed += num_packets_in_cur_task;
-            uint8_t *resultbuf_va = bufarray_get_va(&vdev->resultbuf_array, task_id);
-            off_t resultbuf_ra = bufarray_get_ra(&vdev->resultbuf_array, task_id);
-            off_t writeback_ra = bufarray_get_ra_from_index(vdev->remote_writebuf_base_ra, vdev->resultbuf_size, PAGE_SIZE, task_id);
-            compiler_fence();
-            int32_t pktproc_res_size = get_result_size(vdev->workload_type, num_packets_in_cur_task);
-            struct offload_task_tailroom *tailroom = (struct offload_task_tailroom *)(resultbuf_va + pktproc_res_size);
-            tailroom->ts_proc_begin = ts_proc_begin;
-            tailroom->ts_proc_end = ts_proc_end;
-            uint64_t ts_xfer_begin = knapp_get_usec();
-            assert ( 0 == scif_writeto(vdev->data_epd, resultbuf_ra, pktproc_res_size, writeback_ra, 0) );
-            assert ( 0 == scif_fence_signal(vdev->data_epd, 0, 0, vdev->remote_poll_ring_window + sizeof(uint64_t) * task_id, KNAPP_OFFLOAD_COMPLETE, SCIF_FENCE_INIT_SELF | SCIF_SIGNAL_REMOTE) );
-            uint64_t xfer_diff = knapp_get_usec() - ts_xfer_begin;
-            acc_batch_transfer_us += xfer_diff;
-            acc_batch_transfer_us_sq += (xfer_diff * xfer_diff);
-            //log_device(vdev->device_id, "Finished task %d\n", task_id);
-        }
-    } else {
-        while ( w->exit == false ) {
-            int task_id = vdev->cur_task_id;
-            w = &vdev->per_thread_work_info[task_id][tid];
-            //log_device(vdev->device_id, "Thread %2d about to process task %d\n", tid, task_id);
-            w->data_ready_barrier->here(tid);
-            //log_device(vdev->device_id, "Thread %2d data ready for task %d (%d packets)\n", tid, task_id, w->num_packets);
-            proc_ipv4(w);
-            //log_device(vdev->device_id, "Thread %d finished processing task %d\n", tid, task_id);
-        }
-    }
-    return NULL;
-}
-
-void proc_ipv4(struct worker *w) {
+void app_ipv4(struct worker *w) {
     int tid = w->thread_id;
     uint16_t *TBL24_h = w->u.ipv4.TBL24;
     uint16_t *TBLlong_h = w->u.ipv4.TBLlong;
@@ -393,14 +296,15 @@ write_result:
                 //printvec(v_result);
                 v_result = _mm512_mask_add_epi32(v_result, m_valid_so_far, v_result, v_continue);
                 //printvec(v_result);
+				/*
         if ( g_once ) {
             g_once = false;
             //printvec(v_result);
         }
+		*/
         _mm512_mask_extstore_epi32(outputbuf, m_within_range, v_result, _MM_DOWNCONV_EPI32_NONE, _MM_HINT_NT);
     }
 #endif
 #endif
-    w->task_done_barrier->here(w->thread_id);
 }
 

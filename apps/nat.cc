@@ -1,5 +1,5 @@
 #include "nat.hh"
 
-void *app_nat(void *arg) {
-	return 0;
+void app_nat(struct worker *arg) {
+
 }

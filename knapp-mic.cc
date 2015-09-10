@@ -91,6 +91,21 @@ int core_util[NUM_CORES][MAX_THREADS_PER_CORE];
 uint16_t *g_tbl24 = NULL;
 uint16_t *g_tbllong = NULL;
 
+void *worker_thread_loop(void *arg) {
+	struct worker_thread_info *info = (struct worker_thread_info *) arg;
+	int tid = info->thread_id;
+	struct vdevice *vdev = info->vdev;
+	worker_func_t pktproc_func = info->pktproc_func;
+	while ( vdev->exit == false ) {
+		worker_preproc(tid, vdev);
+		int task_id = vdev->cur_task_id;
+		struct worker *w = &vdev->per_thread_work_info[task_id][tid];
+		pktproc_func(w);
+		worker_postproc(tid, vdev);
+	}
+	return NULL;
+}
+
 void *master_thread_loop(void *arg) {
     struct vdevice *vdev = (struct vdevice *) arg;
     int backlog = 16;
@@ -139,6 +154,14 @@ void *master_thread_loop(void *arg) {
     send_ctrlresp(vdev->ctrl_epd, vdev->ctrlbuf, OP_REG_POLLRING, &vdev->poll_ring.ring_ra, NULL, NULL, NULL);
     vdev->worker_threads = (pthread_t *) mem_alloc(sizeof(pthread_t) * vdev->num_worker_threads, CACHE_LINE_SIZE);
     assert ( vdev->worker_threads != NULL );
+	vdev->thread_info_array = (struct worker_thread_info *) mem_alloc(sizeof(struct worker_thread_info) * vdev->num_worker_threads, CACHE_LINE_SIZE);
+	assert ( vdev->thread_info_array != NULL );
+	for ( int i = 0; i < vdev->num_worker_threads; i++ ) {
+		struct worker_thread_info *info = &vdev->thread_info_array[i];
+		info->thread_id = i;
+		info->vdev = vdev;
+		info->pktproc_func = vdev->worker_func;
+	}
     vdev->per_thread_work_info = (struct worker **) mem_alloc(sizeof(struct worker *) * vdev->pipeline_depth, CACHE_LINE_SIZE);
     assert ( vdev->per_thread_work_info != NULL );
     for ( int i = 0; i < (int) vdev->pipeline_depth; i++ ) {
@@ -159,7 +182,7 @@ void *master_thread_loop(void *arg) {
             int ht = get_least_utilized_ht(pcore);
             int lcore = mic_pcore_to_lcore(pcore, ht);
             //log_device(vdev->device_id, "Creating thread for lcore %d (%d, %d) and thread %d\n", lcore, pcore, ht, ithread);
-            assert ( 0 == pthread_create(&vdev->worker_threads[ithread], &attr_per_lcore[lcore], vdev->worker_func, (void *) &vdev->per_thread_work_info[0][ithread]) );
+            assert ( 0 == pthread_create(&vdev->worker_threads[ithread], &attr_per_lcore[lcore], worker_thread_loop, (void *) &vdev->thread_info_array[ithread]) );
             core_util[pcore][ht]++;
             ithread++;
         }

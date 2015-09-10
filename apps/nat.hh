@@ -4,6 +4,6 @@
 #include "../types.hh"
 #include "../utils.hh"
 
-void *app_nat(void *arg);
+void app_nat(struct worker *arg);
 
 #endif

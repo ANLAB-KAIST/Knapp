@@ -218,6 +218,9 @@ void rte_panic(const char *format, ... );
 inline int mic_pcore_to_lcore(int pcore, int ht) {
 	return (pcore * MAX_THREADS_PER_CORE + ht + 1) % (NUM_CORES * MAX_THREADS_PER_CORE);
 }
+
+void worker_preproc(int tid, struct vdevice *vdev);
+void worker_postproc(int tid, struct vdevice *vdev);
 #else /* __MIC__ */
 #ifndef OFFLOAD_NOOP
 void send_ctrlmsg(scif_epd_t epd, uint8_t *buf, ctrl_msg_t msg, void *p1, void *p2, void *p3, void *p4);
@@ -228,16 +231,16 @@ int knapp_get_num_cpus(void);
 inline int knapp_pcore_to_lcore(int numa_node, int pcore_id, int num_cores_per_node) {
 	//FIXME: Sandybridge assumption. Generalize?
 	int nb_cpus = numa_num_configured_cpus();
-        for ( int icpu = 0, cpu_per_node = 0; icpu < nb_cpus; icpu++ ) {
-	    int node = numa_node_of_cpu(icpu);
-	    if ( node == numa_node ) {
-		if ( pcore_id == cpu_per_node ) {
-		    return icpu;
+	for ( int icpu = 0, cpu_per_node = 0; icpu < nb_cpus; icpu++ ) {
+		int node = numa_node_of_cpu(icpu);
+		if ( node == numa_node ) {
+			if ( pcore_id == cpu_per_node ) {
+				return icpu;
+			}
+			cpu_per_node++;
 		}
-		cpu_per_node++;
-	    }
-        }
-        return -1;
+	}
+	return -1;
 }
 #endif /* !__MIC__ */
 void scif_connect_with_retry(struct vdevice *vdev);
