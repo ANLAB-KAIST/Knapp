@@ -42,9 +42,9 @@
 					{
 						"app": "ipv4",
 						"offload_cores": {
-							"range": [0, 1]
+							"range": [0, 0]
 						},
-						"HTs_per_offload_core": 2,
+						"HTs_per_offload_core": 1,
 						"pipeline_depth": 128,
 						"repeat": 7
 					}

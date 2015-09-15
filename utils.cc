@@ -1156,8 +1156,8 @@ void worker_preproc(int tid, struct vdevice *vdev) {
 			double mean_xfer = (vdev->acc_batch_transfer_us / (double) vdev->total_batches_processed);
 			double mean_xfer_sq = (vdev->acc_batch_transfer_us_sq / (double) vdev->total_batches_processed);
 			double xfer_var = mean_xfer_sq - (mean_xfer * mean_xfer);
-			/*log_device(vdev->device_id, "%llu batches processed at %.2lf Mpps, batch proc time: (%.2lf us, var %.2lf), xfer time: (%.2lf us, var %.2lf)\n",
-					vdev->total_batches_processed, vdev->total_packets_processed / (double)tdiff, mean_proc, proc_var, mean_xfer, xfer_var);*/
+			log_device(vdev->device_id, "%llu batches processed at %.2lf Mpps, batch proc time: (%.2lf us, var %.2lf), xfer time: (%.2lf us, var %.2lf)\n",
+					vdev->total_batches_processed, vdev->total_packets_processed / (double)tdiff, mean_proc, proc_var, mean_xfer, xfer_var);
 			vdev->total_batches_processed = 0;
 			vdev->total_packets_processed = 0;
 			vdev->acc_batch_process_us = 0;
