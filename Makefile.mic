@@ -10,7 +10,7 @@ LDFLAGS = -pthread -lscif -lrt
 
 all: $(TARGET)
 
-$(TARGET): knapp-mic
+$(TARGET):
 	$(CC) $(CFLAGS) $(OBJS) -o $@ $(LDFLAGS) 
 #rm -f $(OBJS)
 

@@ -58,3 +58,135 @@ void app_ipv6(struct worker *w) {
         *((int32_t *)(w->outputbuf + (PER_PACKET_RESULT_SIZE_IPV4 * ipacket))) = result;
     }
 }
+
+
+int RoutingTableV6::from_random(int seed, int count)
+{
+    srand(seed);
+    for (int i = 0; i < count; i++) {
+        int len = rand() % 128 + 1;
+        uint128_t addr;
+        uint16_t dest;
+        addr.u32[0] = rand();
+        addr.u32[1] = rand();
+        addr.u32[2] = rand();
+        addr.u32[3] = rand();
+        dest = rand() % 65535 + 1;
+        add(addr, len, dest);
+    }
+    return 0;
+}
+
+void RoutingTableV6::add(uint128_t addr, int len, uint16_t dest)
+{
+    assert(len > 0 && len < 129);
+    m_Tables[len-1]->insert(mask(addr,len), dest);
+}
+
+int RoutingTableV6::build()
+{
+    for (int i = 0; i < 128; i++){
+        HashTable128 *table = m_Tables[i];
+        int len = i;
+        for (Iterator i = table->begin(); i != table->end(); ++i) {
+            int start = 0;
+            int end = 127;
+            int len_marker = (start + end) / 2;
+            while (len_marker != len  && start <= end) {
+                uint128_t temp = mask(*i, len_marker + 1);
+                uint16_t marker_dest = lookup(&temp);
+                if (len_marker < len) {
+                    m_Tables[len_marker]->insert(mask(*i, len_marker +1), marker_dest, IPV6_HASHTABLE_MARKER);
+                }
+
+                if (len < len_marker) {
+                    end = len_marker - 1;
+                } else if (len > len_marker) {
+                    start = len_marker + 1;
+                }
+
+                len_marker = (start + end) / 2;
+            }
+        }
+    }
+    return 0;
+}
+
+uint16_t RoutingTableV6::lookup(uint128_t *ip)
+{
+    // Note: lookup() method is also called from build().
+    //       We should NOT place an assertion on m_IsBuilt here,
+    //       and it should be done before calling this method
+    //       elsewhere.
+
+    int start = 0;
+    int end = 127;
+    uint16_t result = 0;
+    do {
+        int len = (start + end) / 2;
+
+        uint16_t temp = m_Tables[len]->find(mask(*ip, len + 1));
+
+        if (result == 0) {
+            end = len - 1;
+        } else {
+            result = temp;
+            start = len + 1;
+        }
+    } while (start <= end);
+
+    return result;
+}
+
+
+uint32_t HashTable128::find(uint128_t key)
+{
+    uint32_t index = HASH(key, m_TableSize);
+    uint16_t buf[2] = {0,0};
+    uint32_t *ret = (uint32_t*)&buf;
+    if (m_Table[index].state != IPV6_HASHTABLE_EMPTY) {
+        if (m_Table[index].key == key){
+            buf[0] = m_Table[index].val;
+            buf[1] = m_Table[index].state;
+        } else {
+
+            index = m_Table[index].next;
+            while (index != 0) {
+                if (m_Table[index].key == key){
+                    buf[0] = m_Table[index].val;
+                    buf[1] = m_Table[index].state;
+                    break;
+                }
+                index = m_Table[index].next;
+            }
+        }
+    }
+    return *ret;
+}
+
+
+int HashTable128::insert(uint128_t key, uint16_t val, uint16_t state)
+{
+    uint32_t index = HASH(key, m_TableSize);
+    int ret = 0;
+
+    //if hash key collision exist
+    if (m_Table[index].state != IPV6_HASHTABLE_EMPTY) {
+        while (m_Table[index].key != key) {
+            if (m_Table[index].next == 0) {
+                assert(m_NextChain < m_TableSize * 2 - 1);
+                m_Table[index].next = m_NextChain;
+                m_Table[m_NextChain].key = key;
+                m_NextChain++;
+            }
+            index = m_Table[index].next;
+        }
+    }
+
+    m_Table[index].key = key;
+    m_Table[index].val = val;
+    m_Table[index].state |= state;
+    m_Table[index].next = 0;
+
+    return ret;
+}
