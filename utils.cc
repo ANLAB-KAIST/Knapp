@@ -805,6 +805,7 @@ void init_global_refdata() {
     memset(g_tbllong, 0, TBLlong_size);
     ipv4_load_rib_from_file("routing_info.txt", g_tbl24, g_tbllong);
 	log_info("Done.\n");
+	
 	log_info("Initializing IPv6 routing table.\n");
     size_t RouteV6_size = sizeof(RoutingTableV6);
 	log_info("Allocating %lu bytes.\n", RouteV6_size);
@@ -1038,6 +1039,14 @@ void init_worker(struct worker *w, int thread_id, knapp_proto_t workload_type, s
             w->u.ipv4 = vdev->u.ipv4;
             break;
         case APP_IPV6:
+            w->inputbuf = bufarray_get_va(&vdev->inputbuf_array, pipeline_level) + sizeof(struct taskitem) + PER_PACKET_OFFLOAD_SIZE_IPV6 * max_pkts_per_thread * thread_id;
+            w->inputbuf_len = PER_PACKET_OFFLOAD_SIZE_IPV6 * max_pkts_per_thread;
+			w->input_stride = PER_PACKET_OFFLOAD_SIZE_IPV6;
+            w->outputbuf = bufarray_get_va(&vdev->resultbuf_array, pipeline_level) + PER_PACKET_RESULT_SIZE_IPV6 * max_pkts_per_thread * thread_id;
+            w->outputbuf_len = PER_PACKET_RESULT_SIZE_IPV6 * max_pkts_per_thread;
+            w->output_stride = PER_PACKET_RESULT_SIZE_IPV6;
+            w->num_packets = max_pkts_per_thread;
+            w->u.ipv4 = vdev->u.ipv4;
             break;
         case APP_IPSEC:
             break;

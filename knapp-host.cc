@@ -269,6 +269,7 @@ void handle_signal(int signal)
     stop_all();
 }
 
+/*
 static void offload_terminate_cb(struct ev_loop *loop, struct ev_async *w, int revents) {
     struct offload_context *actx = (struct offload_context *) ev_userdata(loop);
     ev_invoke_pending(loop);
@@ -280,6 +281,7 @@ static void offload_terminate_cb(struct ev_loop *loop, struct ev_async *w, int r
 #endif
     ev_break(loop, EVBREAK_ALL);
 }
+*/
 
 void *offload_loop(void *arg) {
     //return NULL;
