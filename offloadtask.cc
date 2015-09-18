@@ -2,12 +2,6 @@
 #include "offloadtask.hh"
 
 static size_t serialize_ipv4(uint8_t *scif_payload, struct packet **pkts, unsigned n) {
-    /*
-    *((uint16_t *)scif_payload) = (uint16_t)n;
-    scif_payload += sizeof(uint16_t);
-    *((uint16_t *)scif_payload) = (uint16_t)PER_PACKET_OFFLOAD_SIZE_IPV4; 
-    scif_payload += sizeof(uint16_t);
-    */
     for ( unsigned i = 0; i < n; i++ ) {
         struct packet *p = pkts[i];
         uint8_t *pbuf = rte_pktmbuf_mtod(p->mbuf, uint8_t *);
@@ -21,6 +15,17 @@ static size_t serialize_ipv4(uint8_t *scif_payload, struct packet **pkts, unsign
 }
 
 static size_t serialize_ipv6(uint8_t *scif_payload, struct packet **pkts, unsigned n) {
+	for ( unsigned i = 0; i < n; i++ ) {
+        struct packet *p = pkts[i];
+        uint8_t *pbuf = rte_pktmbuf_mtod(p->mbuf, uint8_t *);
+        memcpy((void *)scif_payload, (void *)pbuf, sizeof(struct ether_hdr));
+        scif_payload += sizeof(struct ether_hdr) + 2; // vector loads need to be 4-byte aligned
+        pbuf += sizeof(struct ether_hdr);
+        memcpy((void *)scif_payload, (void *)pbuf, sizeof(struct ipv6_hdr));
+        scif_payload += sizeof(struct ipv6_hdr);
+    }
+    return (n * PER_PACKET_OFFLOAD_SIZE_IPV6);
+
     return 0;
 }
 
@@ -60,7 +65,8 @@ size_t offload_task::serialize() {
 pktprocess_result_t offload_task::offload_postproc(int index) {
 #ifndef OFFLOAD_NOOP
     pktprocess_result_t result;
-    int32_t res;
+    //uint8_t *pbuf = rte_pktmbuf_mtod(pkts[index]->mbuf, uint8_t *);
+	int32_t res;
     assert ( index >= 0 && index < (int) count );
     switch(apptype) {
         case APP_IPV4_LOOKUP:
@@ -68,6 +74,11 @@ pktprocess_result_t offload_task::offload_postproc(int index) {
             res = ((int32_t *) resultbuf)[index];
             result = (pktprocess_result_t) res;
             return result;
+		case APP_IPV6:
+			//struct ipv6hdr *ipv6 = (struct ipv6hdr *)(((struct ether_hdr *) pbuf) + 1);
+			res = ((int32_t *) resultbuf)[index];
+			result = (pktprocess_result_t) res;
+			return result;
         default:
             return DROP;
     }

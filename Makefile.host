@@ -4,17 +4,29 @@ endif
 RTE_TARGET ?= x86_64-native-linuxapp-gcc
 KNAPP_PMD ?= ixgbe
 KNAPP_RTE_LIBS = rte_eal rte_cmdline rte_timer rte_malloc rte_mempool rte_mbuf rte_ring ethdev rte_pmd_$(KNAPP_PMD)
-
+TARGET = knapp-host
+SRCS = utils.cc offloadtask.cc jsoncpp.cpp knapp-host.cc
+OBJS = $(SRCS:.cc=.o)
+CC = g++
 CFLAGS = -std=c++11 -march=native -Wall -I$(RTE_SDK)/include -O3 #-DOFFLOAD_NOOP #-DOFFLOAD_NOOP_2#-g
 #CFLAGS = -std=c++0x -march=native -Wall -O2 -g -I$(RTE_SDK)/include
 #CFLAGS = -std=c++0x -march=native -Wall -O2 -g -I$(RTE_SDK)/include -fpermissive -Wsign-compare
 #LDFLAGS = -L$(RTE_SDK)/lib -pthread -lev -lscif -lrt -lnuma -Wl,--whole-archive -Wl,--start-group $(patsubst %,-l%,$(KNAPP_RTE_LIBS)) -Wl,--end-group -Wl,--no-whole-archive -ldl
 LDFLAGS = -L$(RTE_SDK)/lib -pthread -lev -lrt -lscif -lnuma -Wl,--whole-archive -Wl,--start-group $(patsubst %,-l%,$(KNAPP_RTE_LIBS)) -Wl,--end-group -Wl,--no-whole-archive -ldl
+DEPS = .make.dep.host
+
+HEADERS = $(wildcard *.hh)
 
 .PHONY: clean
 
-knapp-host: knapp-host.cc
-	g++ $(CFLAGS) utils.cc offloadtask.cc jsoncpp.cpp knapp-host.cc -o knapp-host $(LDFLAGS)
+.cc.o:
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(TARGET): $(OBJS)
+	$(CC) $(CFLAGS) $(OBJS) -o $@ $(LDFLAGS)
 
 clean:
-	rm knapp-host
+	@rm -f $(TARGET) *.o
+
+$(DEPS): $(SRCS) $(HEADERS)
+	@$(CC) $(CFLAGS) -MM $(SRCS) > $(DEPS);

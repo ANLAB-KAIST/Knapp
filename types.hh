@@ -47,9 +47,6 @@
 #include <rte_ip.h>
 #include <rte_udp.h>
 #include "queue.hh"
-#ifndef OFFLOAD_NOOP
-#include <scif.h>
-#endif
 
 #endif
 
@@ -95,9 +92,14 @@
 #define PAGE_ALIGNED __attribute__ ((aligned (PAGE_SIZE)))
 
 #ifdef __MIC__
+//TODO: update rx'ed packets with ipv4 result hdrs
 #define PER_PACKET_OFFLOAD_SIZE_IPV4 (sizeof(struct ether_hdr) + 2 + sizeof(struct iphdr))
+#define PER_PACKET_OFFLOAD_SIZE_IPV6 (sizeof(struct ether_hdr) + 2 + sizeof(struct ipv6hdr))
+#define PER_PACKET_OFFLOAD_RESULT_SIZE_IPV6 (sizeof(struct ipv6hdr) + sizeof(int32_t))
 #else
 #define PER_PACKET_OFFLOAD_SIZE_IPV4 (sizeof(struct ether_hdr) + 2 + sizeof(struct ipv4_hdr))
+#define PER_PACKET_OFFLOAD_SIZE_IPV6 (sizeof(struct ether_hdr) + 2 + sizeof(struct ipv6_hdr))
+#define PER_PACKET_OFFLOAD_RESULT_SIZE_IPV6 (sizeof(struct ipv6_hdr) + sizeof(int32_t))
 #endif
 #define PER_PACKET_RESULT_SIZE_IPV4 (sizeof(int32_t))
 
@@ -273,8 +275,8 @@ struct io_context {
     int port_map[KNAPP_MAX_PORTS];
     int inv_port_map[KNAPP_MAX_PORTS];
 
+    int io_batch_size;
     unsigned num_hw_rx_queues;
-    unsigned io_batch_size;
     unsigned offload_batch_size;
     unsigned num_io_threads;
     uint64_t last_tx_tick;

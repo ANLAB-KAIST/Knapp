@@ -28,15 +28,6 @@ void app_ipv4(struct worker *w) {
     //compiler_fence();
 
 #ifdef EMPTY_CYCLES
-    /*
-    memset(w->outputbuf, 0, w->num_packets * sizeof(int32_t));
-    int x = num_bubble_cycles / 2;
-    asm("1:decl %0;\n\t"
-       "jnz 1b;\n\t"
-       : "=r"(x)// Nope
-       : "r"(x)
-   );
-    */
     int x = num_bubble_cycles;
     while ( x-- )
         asm("");

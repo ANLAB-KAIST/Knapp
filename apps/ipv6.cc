@@ -1,7 +1,8 @@
 #include "ipv6.hh"
 #include <cstdlib>
 #include <memory.h>
-
+#include <linux/ipv6.h>
+/*
 struct ipv6hdr {
         uint8_t                    priority:4,
                                           version:4;
@@ -14,6 +15,7 @@ struct ipv6hdr {
         uint128_t        saddr;
         uint128_t        daddr;
 };
+*/
 
 static uint64_t ntohll(uint64_t val)
 {
