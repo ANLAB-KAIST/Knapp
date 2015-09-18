@@ -56,7 +56,7 @@ std::map<knapp_proto_t, std::string> proto_to_appstring = {
 
 std::map<knapp_proto_t, size_t> per_packet_offload_input_size = {
     { APP_IPV4, PER_PACKET_OFFLOAD_SIZE_IPV4 },
-    { APP_IPV6, 0 },
+    { APP_IPV6, PER_PACKET_OFFLOAD_SIZE_IPV6 },
     { APP_IPSEC, 0 },
     { APP_IDS, 0 },
     { APP_NAT, 0 },
@@ -65,7 +65,7 @@ std::map<knapp_proto_t, size_t> per_packet_offload_input_size = {
 
 std::map<knapp_proto_t, size_t> per_packet_offload_result_size = {
     { APP_IPV4, PER_PACKET_RESULT_SIZE_IPV4 },
-    { APP_IPV6, 0 },
+    { APP_IPV6, PER_PACKET_RESULT_SIZE_IPV6 },
     { APP_IPSEC, 0 },
     { APP_IDS, 0 },
     { APP_NAT, 0 },
@@ -1046,7 +1046,7 @@ void init_worker(struct worker *w, int thread_id, knapp_proto_t workload_type, s
             w->outputbuf_len = PER_PACKET_RESULT_SIZE_IPV6 * max_pkts_per_thread;
             w->output_stride = PER_PACKET_RESULT_SIZE_IPV6;
             w->num_packets = max_pkts_per_thread;
-            w->u.ipv4 = vdev->u.ipv4;
+            w->u.ipv6 = vdev->u.ipv6;
             break;
         case APP_IPSEC:
             break;

@@ -40,8 +40,13 @@ inline uint32_t myrand(uint64_t *seed)
 }
 
 inline uint32_t get_result_size(knapp_proto_t workload_type, int num_packets) {
-	if ( workload_type == APP_IPV4 ) {
-		return num_packets * PER_PACKET_RESULT_SIZE_IPV4;
+	switch ( workload_type ) {
+		case APP_IPV4:
+			return num_packets * PER_PACKET_RESULT_SIZE_IPV4;
+		case APP_IPV6:
+			return num_packets * PER_PACKET_RESULT_SIZE_IPV6;
+		default:
+			break;
 	}
 	assert(0);
 	return 0;

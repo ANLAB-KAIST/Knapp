@@ -31,6 +31,7 @@ all: knapp-host
 
 knapp-host: $(OBJS)
 	g++ $(CFLAGS) $(OBJS) -o knapp-host $(LDFLAGS)
+	@rm -f $(OBJS)
 
 .cc.o:
 	$(CC) $(CFLAGS) -c $< -o $@

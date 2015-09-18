@@ -1,21 +1,6 @@
 #include "ipv6.hh"
 #include <cstdlib>
 #include <memory.h>
-#include <linux/ipv6.h>
-/*
-struct ipv6hdr {
-        uint8_t                    priority:4,
-                                          version:4;
-        uint8_t                    flow_lbl[3];
-
-        uint16_t                  payload_len;
-        uint8_t                    nexthdr;
-        uint8_t                    hop_limit;
-
-        uint128_t        saddr;
-        uint128_t        daddr;
-};
-*/
 
 static uint64_t ntohll(uint64_t val)
 {
@@ -228,7 +213,7 @@ static inline void app_ipv6_serial(struct worker *w) {
 }
 
 void app_ipv6(struct worker *w) {
-#ifdef VECTORIZE_IPV4
+#ifdef VECTORIZE_IPV6
 	app_ipv6_vector(w);
 #else
 	app_ipv6_serial(w);
