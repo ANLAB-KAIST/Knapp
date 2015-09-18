@@ -1153,6 +1153,8 @@ static void load_config(std::string& filename) {
 
 int main(int argc, char **argv)
 {
+	if(check_collision(PROGRAM_NAME, COLLISION_USE_TEMP | COLLISION_NOWAIT) < 0)
+		return -1;
     unsigned loglevel = RTE_LOG_WARNING;
     int ret;
 

@@ -261,6 +261,8 @@ int num_bubble_cycles = 100;
 
 int main (int argc, char *argv[])
 {
+	if(check_collision(PROGRAM_NAME, COLLISION_USE_TEMP | COLLISION_NOWAIT) < 0)
+		return -1;
     long num_lcores = sysconf(_SC_NPROCESSORS_ONLN);
     long num_pcores = sysconf(_SC_NPROCESSORS_ONLN) / MAX_THREADS_PER_CORE;
     setlocale(LC_NUMERIC, "");

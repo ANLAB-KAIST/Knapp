@@ -11,6 +11,17 @@
 #include "json/json.h"
 #include "types.hh"
 
+#define COLLISION_NOWAIT (1)
+#define COLLISION_USE_TEMP (2)
+
+#ifdef __MIC__
+#define PROGRAM_NAME "KNAPP_MIC"
+#else
+#define PROGRAM_NAME "KNAPP_HOST"
+#endif
+
+int check_collision(const char* program_name, uint32_t flags);
+
 #define CP(x) fprintf(stderr, "CP "#x"\n")
 #define PRN(x) fprintf(stderr, "CP "#x": %d\n", x)
 #define QQ(x) fprintf(stderr, #x"\n")
