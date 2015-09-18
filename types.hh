@@ -491,7 +491,7 @@ inline uint128_t mask(const uint128_t aa, int len)
         a.u64[1] = 0;
     }
     return a;
-};
+}
 
 typedef struct
 {
