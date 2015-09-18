@@ -47,6 +47,9 @@
 #include <rte_ip.h>
 #include <rte_udp.h>
 #include "queue.hh"
+#ifndef OFFLOAD_NOOP
+#include <scif.h>
+#endif
 
 #endif
 
@@ -92,18 +95,14 @@
 #define PAGE_ALIGNED __attribute__ ((aligned (PAGE_SIZE)))
 
 #ifdef __MIC__
-//TODO: update rx'ed packets with ipv4 result hdrs
 #define PER_PACKET_OFFLOAD_SIZE_IPV4 (sizeof(struct ether_hdr) + 2 + sizeof(struct iphdr))
 #define PER_PACKET_OFFLOAD_SIZE_IPV6 (sizeof(struct ether_hdr) + 2 + sizeof(struct ipv6hdr))
-//#define PER_PACKET_RESULT_SIZE_IPV6 (sizeof(struct ipv6hdr) + sizeof(int32_t))
-#define PER_PACKET_RESULT_SIZE_IPV6 (sizeof(int32_t))
 #else
 #define PER_PACKET_OFFLOAD_SIZE_IPV4 (sizeof(struct ether_hdr) + 2 + sizeof(struct ipv4_hdr))
 #define PER_PACKET_OFFLOAD_SIZE_IPV6 (sizeof(struct ether_hdr) + 2 + sizeof(struct ipv6_hdr))
-//#define PER_PACKET_RESULT_SIZE_IPV6 (sizeof(struct ipv6_hdr) + sizeof(int32_t))
-#define PER_PACKET_RESULT_SIZE_IPV6 (sizeof(int32_t))
 #endif
-#define PER_PACKET_RESULT_SIZE_IPV4 (sizeof(int32_t) + sizeof(uint16_t) + sizeof(uint16_t)) // Result, new ttl, new csum
+#define PER_PACKET_RESULT_SIZE_IPV4 (sizeof(int32_t) + sizeof(uint16_t) + sizeof(uint16_t)) // result, new ttl, new csum
+#define PER_PACKET_RESULT_SIZE_IPV6 (sizeof(int32_t)) // just the result for now
 
 #define MAX_LATENCY         10000  /* from 0 usec to 9.999 msec */
 #define MAX_FLOWS           16384
@@ -277,8 +276,9 @@ struct io_context {
     int port_map[KNAPP_MAX_PORTS];
     int inv_port_map[KNAPP_MAX_PORTS];
 
-    int io_batch_size;
+	unsigned max_tasks_in_flight;
     unsigned num_hw_rx_queues;
+    unsigned io_batch_size;
     unsigned offload_batch_size;
     unsigned num_io_threads;
     uint64_t last_tx_tick;
@@ -302,40 +302,15 @@ struct io_context {
     //struct ev_async *    finished_task_watcher;
 
     struct rte_ring *drop_queue;
-    struct rte_ring *offload_completion_queue;
     int cur_vdev_index;
     int cur_task_id;
     FixedRing<struct vdevice *, nullptr> vdevs;
-    FixedRing<struct offload_task *, nullptr> offload_task_q;
 
     struct offload_task *cur_offload_task;
 
     struct rte_mempool *offload_batch_mempool;
     struct rte_mempool *offload_task_mempool;
 
-} __rte_cache_aligned;
-
-struct offload_context {
-    int                    my_node;
-    int                    my_cpu;
-    int                    my_cfg_tid;
-    int                    my_cfg_cpu; // 0-based cpu index per node
-    //FIXME: Max # of acc threads is only one per offload_context (pinned to a single core) at this time
-    pthread_t            my_thread;
-    struct ev_loop *    evloop;
-    struct ev_async *    offload_input_watcher;
-    struct ev_async *    offload_complete_watcher;
-    struct ev_async *    terminate_watcher;
-    /*
-    uint64_t last_compl_poll_ts;
-    uint64_t compl_poll_acc_us;
-    uint64_t compl_poll_ctr;
-    */
-    FixedRing<struct vdevice *, nullptr> vdevs;
-    pthread_barrier_t    *init_barrier;
-    uint32_t offload_batch_size;
-    uint32_t offload_threshold;
-    bool exit;
 } __rte_cache_aligned;
 
 class CondVar
@@ -386,9 +361,6 @@ class CondVar
 } __attribute__ ((aligned (64)));
 
 #else
-	
-
-
 union u_worker {
     struct worker_ipv4 {
         uint16_t *TBL24;

@@ -47,7 +47,7 @@ void load_config() {
     assert ( root.isArray() );
     for ( unsigned inuma = 0; inuma < root.size(); inuma++ ) {
         Json::Value& node_config = root[inuma];
-        Json::Value& vdev_confs = node_config["accelerator_threads"][0]["vdevices"];
+        Json::Value& vdev_confs = node_config["vdevices"];
         if ( vdev_confs.isNull() || !vdev_confs.isArray() || vdev_confs.size() == 0 ) { 
             fprintf(stderr, "Node %d unused. Skipping...\n", inuma);
             continue;
