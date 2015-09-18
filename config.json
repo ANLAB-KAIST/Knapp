@@ -3,13 +3,13 @@
 		
 	},
 	{
-		"io_cores": { "range": [0, 7] },
+		"io_cores": { "range": [0, 6] },
 		"rx_queues_to_ports": [
 			{ 
-				"range": [0, 7],
+				"range": [0, 6],
 				"mapped_to": 0,
 				"repeat": {
-					"incr_mapped_from": 8,
+					"incr_mapped_from": 7,
 					"incr_mapped_to": 1,
 					"times": 4
 				}
@@ -17,34 +17,39 @@
 		],
 		"rx_queues_to_io_cores": [
 			{ 
-				"array": [0, 8, 16, 24],
+				"array": [0, 7, 14, 21],
 				"mapped_to": 0,
 				"repeat": {
 					"incr_mapped_from": 1,
 					"incr_mapped_to": 1,
-					"times": 8
+					"times": 7
 				}
 			} 
 		],
 		"io_cores_to_vdevices": [
 			{
-				"range": [0, 7],
+				"range": [0, 6],
 				"mapped_to": {
-					"range": [0, 7]
+					"range": [0, 6]
 				},
 				"policy": "one-to-one"
 			}
 		],
-        "vdevices" : [
-            {
-                "app": "ipv4",
-                "offload_cores": {
-                    "range": [0, 3]
-                },
-                "HTs_per_offload_core": 2,
-                "pipeline_depth": 128,
-                "repeat": 8
-            }
-        ]
+		"accelerator_threads": [
+			{
+				"core" : 7,
+				"vdevices" : [
+					{
+						"app": "ipv4",
+						"offload_cores": {
+							"range": [0, 1]
+						},
+						"HTs_per_offload_core": 1,
+						"pipeline_depth": 128,
+						"repeat": 7
+					}
+				]
+			}
+		]
 	}
 ]

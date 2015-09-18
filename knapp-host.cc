@@ -74,6 +74,7 @@ extern inline uint32_t myrand(uint64_t *seed);
 struct rte_mempool* rx_mempools[KNAPP_MAX_DEVICES][KNAPP_MAX_QUEUES_PER_THREAD];
 //static knapp_thread_type_t context_types[KNAPP_MAX_CPUS] = { NOOP_THREAD, };
 static struct io_context *io_contexts[KNAPP_MAX_CPUS] = { NULL, };
+static struct offload_context *offload_contexts[KNAPP_MAX_CPUS] = { NULL,};
 
 //extern std::map<ctrl_msg_t, std::string> ctrltype_to_ctrlstring;
 
@@ -87,7 +88,6 @@ bool node_is_used[KNAPP_MAX_NODES] = {false, };
 struct io_node_stat *per_node_stats[KNAPP_MAX_NODES] = {0, };
 struct ev_async *node_stat_watchers[KNAPP_MAX_NODES] = {0, };
 rte_atomic16_t *node_master_flags[KNAPP_MAX_NODES] = {0, };
-std::vector<struct vdevice *> vdevs_in_node[KNAPP_MAX_NODES];
 
 /* Global options. */
 int num_cpus    = 0;
@@ -97,7 +97,7 @@ int offload_batch_size = 2048;
 int offload_threshold = 1024;
 extern int global_vdevice_counter;
 
-//pthread_barrier_t *per_node_offload_init_barrier[KNAPP_MAX_NODES] = {NULL, };
+pthread_barrier_t *per_node_offload_init_barrier[KNAPP_MAX_NODES] = {NULL, };
 
 extern std::map<std::string, knapp_proto_t> appstring_to_proto;
 
@@ -237,19 +237,22 @@ static int ether_aton(const char *buf, size_t len, struct ether_addr *addr)
 void stop_all(void)
 {
     if ( pthread_self() == main_thread_id ) {
-		int num_nodes = (int) numa_num_configured_nodes();
-		for (int node = 0; node < num_nodes; node++) {
-			for ( int ivdev = 0; ivdev < (int)vdevs_in_node[node].size(); ivdev++) {
-				scif_close(vdevs_in_node[node][ivdev]->data_epd);
-				scif_close(vdevs_in_node[node][ivdev]->ctrl_epd);
-			}
-		}
         int num_cpus = knapp_get_num_cpus();
         for (int c = 0; c < num_cpus; c++) {
             if (io_contexts[c] != NULL) {
                 struct io_context *ctx = io_contexts[c];
                 ctx->exit = true;
                 ev_async_send(ctx->evloop, ctx->terminate_watcher);
+            }
+            if (offload_contexts[c] != NULL) {
+                struct offload_context *actx = offload_contexts[c];
+                actx->exit = true;
+                ev_async_send(actx->evloop, actx->terminate_watcher);
+            }
+        }
+        for ( int c = 0; c < num_cpus; c++ ) {
+            if ( offload_contexts[c] != NULL ) {
+                pthread_join(offload_contexts[c]->my_thread, NULL);
             }
         }
         rte_eal_mp_wait_lcore();
@@ -265,6 +268,122 @@ void handle_signal(int signal)
 {
     stop_all();
 }
+
+/*
+static void offload_terminate_cb(struct ev_loop *loop, struct ev_async *w, int revents) {
+    struct offload_context *actx = (struct offload_context *) ev_userdata(loop);
+    ev_invoke_pending(loop);
+#ifndef OFFLOAD_NOOP
+    for ( unsigned i = 0; i < actx->vdevs.size(); i++ ) {
+        scif_close(actx->vdevs[i]->data_epd);
+        scif_close(actx->vdevs[i]->ctrl_epd);
+    }
+#endif
+    ev_break(loop, EVBREAK_ALL);
+}
+*/
+
+void *offload_loop(void *arg) {
+    //return NULL;
+    struct offload_context *actx = (struct offload_context *) arg;
+    int tid = actx->my_cfg_cpu;
+    actx->evloop = ev_loop_new(EVFLAG_AUTO);
+    // Thread naming and pinning
+    char tname[64];
+    snprintf(tname, 64, "offload-n%d-lc%d", actx->my_node, actx->my_cpu);
+    prctl(PR_SET_NAME, tname, 0, 0, 0);
+    RTE_PER_LCORE(_lcore_id) = actx->my_cpu;
+    //log_offload(tid, "(node %d, lcore %d)\n"
+    //assert ( (int) rte_socket_id() == actx->my_node );
+    assert ( (int) rte_lcore_id() == actx->my_cpu );
+    knapp_bind_cpu(actx->my_cpu);
+    log_offload(tid, "Offload thread pinned to CPU %d (pcore %d of node %d)\n", actx->my_cpu, actx->my_cfg_cpu, actx->my_node);
+
+    // Register offload params
+#ifndef OFFLOAD_NOOP
+    for ( unsigned ivdev = 0; ivdev < actx->vdevs.size(); ivdev++ ) {
+        struct vdevice *vdev = actx->vdevs[ivdev];
+        int32_t response;
+        log_offload(tid, "sending ctrl msg OP_SET_WORKLOAD_TYPE(%d) across control channel\n", OP_SET_WORKLOAD_TYPE);
+        // Remotely set offload workload type (ipv4, ipsec, ...)
+        int32_t workload_type = vdev->workload_type;
+        send_ctrlmsg(vdev->ctrl_epd, vdev->ctrlbuf, OP_SET_WORKLOAD_TYPE, &workload_type, &actx->offload_batch_size, NULL, NULL);
+        response = *((int32_t *) vdev->ctrlbuf);
+        if ( response != RESP_SUCCESS ) {
+            rte_exit(EXIT_FAILURE, "Error setting up workload type for offload thread %d\n", actx->my_cfg_tid);
+        }
+        log_offload(tid, "initialized for workload type '%s'\n", proto_to_appstring[vdev->workload_type].c_str());
+
+        // Allocate device buffer and retrieve its RAS offset
+        off_t host_resultbuf_base_ra = bufarray_get_ra(&vdev->resultbuf_array, 0);
+        //assert ( host_resultbuf_base_ra >= 0 );
+        send_ctrlmsg(vdev->ctrl_epd, vdev->ctrlbuf, OP_MALLOC, &vdev->inputbuf_size, &vdev->resultbuf_size, &vdev->pipeline_depth, &host_resultbuf_base_ra);
+        unsigned ctrlbuf_offset = 0;
+        response = *((int32_t *) vdev->ctrlbuf);
+        ctrlbuf_offset += sizeof(int32_t);
+        vdev->remote_writebuf_base_ra = *((off_t *) (vdev->ctrlbuf + ctrlbuf_offset));
+        // Register local poll-ring's base VA and send its RAS offset for task-done polling
+        log_offload(tid, "Local poll ring registered at RA %lld (length %'d, allocated size %'dB)\n", vdev->poll_ring.ring_ra, (int) vdev->poll_ring.len, (int) vdev->poll_ring.alloc_bytes);
+        send_ctrlmsg(vdev->ctrl_epd, vdev->ctrlbuf, OP_REG_POLLRING, &vdev->poll_ring.len, &vdev->poll_ring.ring_ra, NULL, NULL);
+        response = *((int32_t *) vdev->ctrlbuf);
+        if ( response != RESP_SUCCESS ) {
+            rte_exit(EXIT_FAILURE, "Error sending registered poll ring address for offload thread %d\n", actx->my_cfg_tid);
+        }
+        vdev->remote_poll_ring_window = *((off_t *) (vdev->ctrlbuf + sizeof(int32_t)));
+
+        log_offload(tid, "Received remote poll ring RA at %lld\n", vdev->remote_poll_ring_window);
+    }
+#endif
+    // Init ev_loop
+    //actx->evloop = ev_loop_new(EVFLAG_AUTO);
+    //ev_set_userdata(actx->evloop, actx);
+
+    // Register terminate event
+    //ev_set_cb(actx->terminate_watcher, offload_terminate_cb);
+
+    //ev_async_start(actx->evloop, actx->terminate_watcher);
+
+
+
+    // All done! synchronize with master thread
+    pthread_barrier_wait(actx->init_barrier);
+    log_offload(tid, "Passed init barrier\n");
+#ifndef OFFLOAD_NOOP
+    while ( likely(!actx->exit) ) {
+        for ( unsigned ivdev = 0; ivdev < actx->vdevs.size(); ivdev++ ) {
+            struct vdevice *vdev = actx->vdevs[ivdev];
+            uint64_t volatile *local_pollring = vdev->poll_ring.ring;
+            int next_poll = vdev->next_poll;
+            compiler_fence();
+			int rc;
+            if ( local_pollring[next_poll] == KNAPP_OFFLOAD_COMPLETE ) {
+                struct offload_task *ot = &vdev->tasks_in_flight[next_poll];
+                local_pollring[next_poll] = KNAPP_COPY_PENDING;
+                struct io_context *src_ctx = ot->get_src_ioctx();
+                struct rte_ring *q = src_ctx->offload_completion_queue;
+                ot->mark_offload_finish();
+                ot->update_offload_ts();
+                while ( 0 != (rc = rte_ring_enqueue(q, (void *) ot) ) ) {
+                    rte_pause();
+                }
+                vdev->next_poll = (next_poll + 1) % vdev->poll_ring.len;
+                //fprintf(stderr, "new poll id: %d\n", vdev->next_poll);
+            }
+        }
+        //ev_run(actx->evloop, EVRUN_NOWAIT);
+    }
+#else /* OFFLOAD_NOOP */
+    while ( likely(!actx->exit) ) {
+        rte_pause();
+        //ev_run(actx->evloop, EVRUN_NOWAIT);
+    }
+#endif /* !OFFLOAD_NOOP */
+    // Event loop broken. Free context and join master thread
+    rte_free(arg);
+    return NULL;
+}
+/* ### END callbacks and pthread functions used by offload thread context */
+
 
 static void io_terminate_cb(struct ev_loop *loop, struct ev_async *watcher, int revents)
 {
@@ -330,7 +449,8 @@ int io_loop(void *arg)
     ev_timer_again(ctx->evloop, ctx->stat_timer);
     ctx->last_tx_tick = rte_rdtsc();
 
-	struct offload_task **tasks_to_tx = (struct offload_task **) rte_malloc_socket("tasks_to_tx", sizeof(struct offload_task *) * ctx->max_tasks_in_flight, RTE_CACHE_LINE_SIZE, ctx->my_node);
+    //assert ( 0 == rte_mempool_get(ctx->offload_task_mempool, (void **) &ctx->cur_offload_task) );
+    //assert ( ctx->cur_offload_task != NULL );
 #ifndef OFFLOAD_NOOP
     ctx->cur_vdev_index = 0;
     struct vdevice *cur_vdev = ctx->vdevs[ctx->cur_vdev_index];
@@ -404,35 +524,20 @@ int io_loop(void *arg)
             }
             total_recv_cnt += recv_cnt;
             ctx->port_stats[ctx->inv_port_map[port_idx]].num_recv_pkts += recv_cnt;
+            if ( ctx->offload_task_q.full() ) {
+                break;
+            }
         }
 
+        struct rte_ring *q = ctx->offload_completion_queue;
         //log_io(tid, "point reached: ring size %d\n", rte_ring_count(q));
-		unsigned num_tasks_to_tx = 0;
-		for ( unsigned ivdev = 0; ivdev < ctx->vdevs.size(); ivdev++ ) {
-			int local_task_count = 0;
-            struct vdevice *vdev = ctx->vdevs[ivdev];
-            uint64_t volatile *local_pollring = vdev->poll_ring.ring;
-            int next_poll = vdev->next_poll;
-            compiler_fence();
-			while ( local_pollring[next_poll] == KNAPP_OFFLOAD_COMPLETE ) {
-                struct offload_task *ot = &vdev->tasks_in_flight[next_poll];
-				tasks_to_tx[num_tasks_to_tx++] = ot;
-                local_pollring[next_poll] = KNAPP_COPY_PENDING;
-                //ot->mark_offload_finish();
-                //ot->update_offload_ts();
-				next_poll = (next_poll + 1) % vdev->poll_ring.len;
-                vdev->next_poll = next_poll;
-				local_task_count++;
-				if ( local_task_count >= 1 ) {
-					break;
-				}
-			}
-        }
-
-        if ( num_tasks_to_tx > 0 ) {
-            for ( unsigned itask = 0; itask < num_tasks_to_tx; itask++ ) {
+        unsigned batches_to_tx = rte_ring_count(q);
+        if ( batches_to_tx > 0 ) {
+            struct offload_task *finished_tasks[batches_to_tx];
+            assert ( 0 == rte_ring_dequeue_bulk(q, (void **) finished_tasks, batches_to_tx) );
+            for ( unsigned itask = 0; itask < batches_to_tx; itask++ ) {
                 //log_io(tid, "TX available: %d packets\n", (int) to_tx);
-                struct offload_task *ot = tasks_to_tx[itask];
+                struct offload_task *ot = finished_tasks[itask];
                 uint32_t num_packets = ot->get_count();
                 for ( unsigned ipkt = 0; ipkt < num_packets; ipkt++ ) {
                     struct packet *packet = ot->get_packet(ipkt);
@@ -504,7 +609,7 @@ int io_loop(void *arg)
             ctx->port_stats[iport].num_sent_pkts += to_send;
             int next_tx_offset = 0;
             while ( to_send > 0 ) {
-                int next_tx_batchsize = RTE_MIN((int)ctx->io_batch_size, to_send);
+                int next_tx_batchsize = RTE_MIN(ctx->io_batch_size, to_send);
                 int sent = rte_eth_tx_burst(port_idx, ctx->my_cfg_cpu, per_port_aggregation[iport] + next_tx_offset, next_tx_batchsize);
                 ctx->port_stats[iport].num_sent_pkts -= (next_tx_batchsize - sent);
                 for ( int ipkt = next_tx_offset + sent; ipkt < next_tx_offset + next_tx_batchsize; ipkt++ ) {
@@ -629,9 +734,11 @@ static void load_config(std::string& filename) {
     assert ( config.isArray() );
     // Parsing and applying NUMA node specific core pinning configurations.
     // We validate schema as we go
+    int num_acc_ctxs = 1; // FIXME: FIX THIS!!!!
     for (unsigned node = 0; node < config.size(); node++) {
         if ( config[node].size() == 0 || config[node]["io_cores"].isNull() || config[node]["rx_queues_to_io_cores"].isNull() )
             continue;
+        struct offload_context *actx;
         char ringname[RTE_RING_NAMESIZE];
         node_is_used[node] = true;
         //char ringname[RTE_RING_NAMESIZE];
@@ -660,117 +767,146 @@ static void load_config(std::string& filename) {
             io_ctxs[cfg_cpu] = (struct io_context *) rte_malloc_socket("io_context", sizeof(struct io_context), RTE_CACHE_LINE_SIZE, node);
         }
 
-#ifndef OFFLOAD_NOOP
+        Json::Value& acc_configs = config[node]["accelerator_threads"];
+        assert ( acc_configs.size() == 1 );
+        actx = (struct offload_context *) rte_malloc_socket("offload_context", sizeof(struct offload_context), RTE_CACHE_LINE_SIZE, node);
+
         {
-			Json::Value& vdevices = config[node]["vdevices"];
-			for ( unsigned i = 0; i < vdevices.size(); i++ ) {
-				Json::Value& vdev_config = vdevices[i];
-				int repeat = 1;
-				uint32_t pipeline_depth = 15;
-				if ( vdev_config["pipeline_depth"].isInt() ) {
-					pipeline_depth = (uint32_t) vdev_config["pipeline_depth"].asInt() - 1;
-				}
-				assert ( pipeline_depth > 0 && (((pipeline_depth + 1) & pipeline_depth) == 0 ) );
-				if ( vdev_config["repeat"].isInt() ) {
-					repeat = vdev_config["repeat"].asInt();
-				}
-				for ( int j = 0; j < repeat; j++ ) {
-					struct vdevice *vdev = (struct vdevice *) rte_zmalloc_socket("vdevice", sizeof(struct vdevice), RTE_CACHE_LINE_SIZE, node);
-					memset(vdev, 0, sizeof(struct vdevice));
-					vdev->ctrlbuf = (uint8_t *) rte_zmalloc_socket("ctrlbuf", KNAPP_OFFLOAD_CTRLBUF_SIZE, RTE_CACHE_LINE_SIZE, node);
-					assert ( vdev->ctrlbuf != NULL );
-					vdev->next_poll = 0;
-					vdev->tasks_in_flight = (struct offload_task *) rte_zmalloc_socket("vdev-in-flight", sizeof(struct offload_task) * pipeline_depth, RTE_CACHE_LINE_SIZE, node);
-					assert ( vdev->tasks_in_flight != NULL );
-					vdev->device_id = global_vdevice_counter++;
-					vdev->pipeline_depth = pipeline_depth;
+            // Initialize accelerator threads
+            // FIXME: 1 device, 1 offload thread. Need to fix this in the future!
+            if ( num_acc_ctxs == 0 ) {
+                rte_exit(EXIT_FAILURE, "Error - no accelerator thread on NUMA-node %d\n", node);
+            }
+            if ( num_acc_ctxs > 1 ) {
+                rte_exit(EXIT_FAILURE, "Error - only 1 accelerator thread allowed per NUMA-node (current: %d)\n", node);
+            }
+            pthread_barrier_t *offload_init_barrier = (pthread_barrier_t *) rte_malloc_socket("offload_init_barrier", sizeof(pthread_barrier_t), RTE_CACHE_LINE_SIZE, node);
+            per_node_offload_init_barrier[node] = offload_init_barrier;
+            pthread_barrier_init(offload_init_barrier, NULL, (unsigned)(num_acc_ctxs + 1));
+            assert ( acc_configs.isArray() );
+            for ( int i_acc = 0; i_acc < num_acc_ctxs; i_acc++ ) {
+                Json::Value& acc_config = acc_configs[i_acc];
+                assert ( actx != NULL );
+                memset(actx, 0, sizeof(struct offload_context));
+                std::vector<int> dedicated_cores;
+                get_list(acc_config["core"], dedicated_cores);
+                assert ( dedicated_cores.size() == 1 );
+                actx->my_node = node;
+                actx->my_cpu = knapp_pcore_to_lcore(node, dedicated_cores[0], num_cpus_per_node);
+                actx->my_cfg_cpu = dedicated_cores[0];
+                actx->my_cfg_tid = i_acc;
+                offload_contexts[actx->my_cpu] = actx;
+
+                actx->init_barrier = offload_init_barrier;
+                actx->offload_batch_size = offload_batch_size;
+                actx->offload_threshold = offload_threshold;
+
+                //actx->serialized_mempool = (struct buffer_pool *) rte_malloc_socket("bp_struct", sizeof(struct buffer_pool), RTE_CACHE_LINE_SIZE, node);
+                //assert ( actx->serialized_mempool != NULL );
+                //actx->serialized_mempool->init(KNAPP_MAX_OFFLOADS_IN_FLIGHT, KNAPP_ETH_MAX_BYTES_ALIGNED * actx->offload_batch_size, node);
+
+                new (&actx->vdevs) FixedRing<struct vdevice *, nullptr>(KNAPP_MAX_VDEVICES_PER_NODE, node);
+
+                #ifndef OFFLOAD_NOOP
+                Json::Value& vdevices = acc_config["vdevices"];
+                for ( unsigned i = 0; i < vdevices.size(); i++ ) {
+                    Json::Value& vdev_config = vdevices[i];
+                    int repeat = 1;
+                    uint32_t pipeline_depth = 15;
+                    if ( vdev_config["pipeline_depth"].isInt() ) {
+                        pipeline_depth = (uint32_t) vdev_config["pipeline_depth"].asInt() - 1;
+                    }
+                    assert ( pipeline_depth > 0 && (((pipeline_depth + 1) & pipeline_depth) == 0 ) );
+                    if ( vdev_config["repeat"].isInt() ) {
+                        repeat = vdev_config["repeat"].asInt();
+                    }
+                    for ( int j = 0; j < repeat; j++ ) {
+                        struct vdevice *vdev = (struct vdevice *) rte_zmalloc_socket("vdevice", sizeof(struct vdevice), RTE_CACHE_LINE_SIZE, node);
+                        memset(vdev, 0, sizeof(struct vdevice));
+                        vdev->ctrlbuf = (uint8_t *) rte_zmalloc_socket("ctrlbuf", KNAPP_OFFLOAD_CTRLBUF_SIZE, RTE_CACHE_LINE_SIZE, node);
+                        assert ( vdev->ctrlbuf != NULL );
+                        vdev->next_poll = 0;
+                        vdev->tasks_in_flight = (struct offload_task *) rte_zmalloc_socket("vdev-in-flight", sizeof(struct offload_task) * pipeline_depth, RTE_CACHE_LINE_SIZE, node);
+                        assert ( vdev->tasks_in_flight != NULL );
+                        vdev->device_id = global_vdevice_counter++;
+                        vdev->pipeline_depth = pipeline_depth;
 #ifndef OFFLOAD_NOOP
-					vdev->data_epd = scif_open();
-					if ( vdev->data_epd == SCIF_OPEN_FAILED ) {
-						rte_exit(EXIT_FAILURE, "scif_open() failed for data endpoint of vdevice %d: ERROR CODE %d.\n", vdev->device_id, vdev->data_epd);
-					}
-					vdev->ctrl_epd = scif_open();
-					if ( vdev->ctrl_epd == SCIF_OPEN_FAILED ) {
-						rte_exit(EXIT_FAILURE, "scif_open() failed for control endpoint of vdevice %d: ERROR CODE %d.\n", vdev->device_id, vdev->ctrl_epd);
-					}
-					int rc;
-					vdev->local_dataport.node = local_node;
-					vdev->local_dataport.port = get_host_dataport(vdev->device_id);
-					vdev->local_ctrlport.node = local_node;
-					vdev->local_ctrlport.port = get_host_ctrlport(vdev->device_id);
+                        vdev->data_epd = scif_open();
+                        if ( vdev->data_epd == SCIF_OPEN_FAILED ) {
+                            rte_exit(EXIT_FAILURE, "scif_open() failed for data endpoint of vdevice %d: ERROR CODE %d.\n", vdev->device_id, vdev->data_epd);
+                        }
+                        vdev->ctrl_epd = scif_open();
+                        if ( vdev->ctrl_epd == SCIF_OPEN_FAILED ) {
+                            rte_exit(EXIT_FAILURE, "scif_open() failed for control endpoint of vdevice %d: ERROR CODE %d.\n", vdev->device_id, vdev->ctrl_epd);
+                        }
+                        int rc;
+                        vdev->local_dataport.node = local_node;
+                        vdev->local_dataport.port = get_host_dataport(vdev->device_id);
+                        vdev->local_ctrlport.node = local_node;
+                        vdev->local_ctrlport.port = get_host_ctrlport(vdev->device_id);
 
-					vdev->remote_dataport.node = remote_scif_nodes[0];
-					vdev->remote_dataport.port = get_mic_dataport(vdev->device_id);
-					vdev->remote_ctrlport.node = remote_scif_nodes[0];
-					vdev->remote_ctrlport.port = get_mic_ctrlport(vdev->device_id);
+                        vdev->remote_dataport.node = remote_scif_nodes[0];
+                        vdev->remote_dataport.port = get_mic_dataport(vdev->device_id);
+                        vdev->remote_ctrlport.node = remote_scif_nodes[0];
+                        vdev->remote_ctrlport.port = get_mic_ctrlport(vdev->device_id);
 
-					rc = scif_bind(vdev->data_epd, vdev->local_dataport.port);
-					assert(rc == vdev->local_dataport.port);
-					rc = scif_bind(vdev->ctrl_epd, vdev->local_ctrlport.port);
-					assert(rc == vdev->local_ctrlport.port);
-					scif_connect_with_retry(vdev);
+                        rc = scif_bind(vdev->data_epd, vdev->local_dataport.port);
+                        assert(rc == vdev->local_dataport.port);
+                        rc = scif_bind(vdev->ctrl_epd, vdev->local_ctrlport.port);
+                        assert(rc == vdev->local_ctrlport.port);
+                        scif_connect_with_retry(vdev);
 #endif
-					pollring_init(&vdev->poll_ring, vdev->pipeline_depth, vdev->data_epd, node);
+                        pollring_init(&vdev->poll_ring, vdev->pipeline_depth, vdev->data_epd, node);
 
-					new (&vdev->cores) FixedRing<int, -1>(KNAPP_MAX_CORES_PER_DEVICE, node);
-					std::vector<int> offload_cores;
-					get_list(vdev_config["offload_cores"], offload_cores);
-					for ( unsigned oc = 0; oc < offload_cores.size(); oc++ ) {
-						vdev->cores.push_back(offload_cores[oc] + j * offload_cores.size());
-					}
-					vdev->ht_per_core = vdev_config["HTs_per_offload_core"].asInt();
-					std::string appname = vdev_config["app"].asString();
-					try {
-						vdev->workload_type = appstring_to_proto[appname];
-					} catch ( const std::out_of_range& oor ) {
-						rte_exit(EXIT_FAILURE, "Invalid app name: '%s'\n", appname.c_str());
-					}
-					vdev->inputbuf_size = sizeof(struct taskitem) + offload_batch_size * per_packet_offload_input_size[vdev->workload_type];
-					vdev->resultbuf_size = offload_batch_size * per_packet_offload_result_size[vdev->workload_type];
-					//new (&vdev->tasks_in_flight) FixedRing<struct offload_task *, nullptr>(vdev->pipeline_depth, node);
+                        new (&vdev->cores) FixedRing<int, -1>(KNAPP_MAX_CORES_PER_DEVICE, node);
+                        std::vector<int> offload_cores;
+                        get_list(vdev_config["offload_cores"], offload_cores);
+                        for ( unsigned oc = 0; oc < offload_cores.size(); oc++ ) {
+                            vdev->cores.push_back(offload_cores[oc] + j * offload_cores.size());
+                        }
+                        vdev->ht_per_core = vdev_config["HTs_per_offload_core"].asInt();
+                        std::string appname = vdev_config["app"].asString();
+                        try {
+                            vdev->workload_type = appstring_to_proto[appname];
+                        } catch ( const std::out_of_range& oor ) {
+                            rte_exit(EXIT_FAILURE, "Invalid app name: '%s'\n", appname.c_str());
+                        }
+                        vdev->inputbuf_size = sizeof(struct taskitem) + actx->offload_batch_size * per_packet_offload_input_size[vdev->workload_type];
+                        vdev->resultbuf_size = actx->offload_batch_size * per_packet_offload_result_size[vdev->workload_type];
+                        //new (&vdev->tasks_in_flight) FixedRing<struct offload_task *, nullptr>(vdev->pipeline_depth, node);
 #ifndef OFFLOAD_NOOP
-					assert ( 0 == bufarray_ra_init(&vdev->offloadbuf_array, vdev->pipeline_depth, vdev->inputbuf_size, PAGE_SIZE, vdev->data_epd, SCIF_PROT_READ | SCIF_PROT_WRITE, node) );
-					assert ( 0 == bufarray_ra_init(&vdev->resultbuf_array, vdev->pipeline_depth, vdev->resultbuf_size, PAGE_SIZE, vdev->data_epd, SCIF_PROT_READ | SCIF_PROT_WRITE, node) );
+                        assert ( 0 == bufarray_ra_init(&vdev->offloadbuf_array, vdev->pipeline_depth, vdev->inputbuf_size, PAGE_SIZE, vdev->data_epd, SCIF_PROT_READ | SCIF_PROT_WRITE, node) );
+                        assert ( 0 == bufarray_ra_init(&vdev->resultbuf_array, vdev->pipeline_depth, vdev->resultbuf_size, PAGE_SIZE, vdev->data_epd, SCIF_PROT_READ | SCIF_PROT_WRITE, node) );
 #else
-					assert ( 0 == bufarray_init(&vdev->offloadbuf_array, vdev->pipeline_depth, vdev->inputbuf_size, PAGE_SIZE, node) );
-					assert ( 0 == bufarray_init(&vdev->resultbuf_array, vdev->pipeline_depth, vdev->resultbuf_size, PAGE_SIZE, node) );
+                        assert ( 0 == bufarray_init(&vdev->offloadbuf_array, vdev->pipeline_depth, vdev->inputbuf_size, PAGE_SIZE, node) );
+                        assert ( 0 == bufarray_init(&vdev->resultbuf_array, vdev->pipeline_depth, vdev->resultbuf_size, PAGE_SIZE, node) );
 #endif
-					//assert ( 0 == bufarray_ra_init(&vdev->task_array, vdev->pipeline_depth, sizeof(struct taskitem), CACHE_LINE_SIZE, vdev->data_epd, SCIF_PROT_READ | SCIF_PROT_WRITE) );
+                        //assert ( 0 == bufarray_ra_init(&vdev->task_array, vdev->pipeline_depth, sizeof(struct taskitem), CACHE_LINE_SIZE, vdev->data_epd, SCIF_PROT_READ | SCIF_PROT_WRITE) );
+                        actx->vdevs.push_back(vdev);
+                    }
+                }
+                #endif /* !OFFLOAD_NOOP */
 
-					int32_t response;
-					log_device(vdev->device_id, "sending ctrl msg OP_SET_WORKLOAD_TYPE(%d) across control channel\n", OP_SET_WORKLOAD_TYPE);
-					// Remotely set offload workload type (ipv4, ipsec, ...)
-					int32_t workload_type = vdev->workload_type;
-					send_ctrlmsg(vdev->ctrl_epd, vdev->ctrlbuf, OP_SET_WORKLOAD_TYPE, &workload_type, &offload_batch_size, NULL, NULL);
-					response = *((int32_t *) vdev->ctrlbuf);
-					if ( response != RESP_SUCCESS ) {
-						rte_exit(EXIT_FAILURE, "Error setting up workload type for vdevice %d\n", vdev->device_id);
-					}
-					log_device(vdev->device_id, "initialized for workload type '%s'\n", proto_to_appstring[vdev->workload_type].c_str());
+                //new (&actx->tasks_in_mic) FixedRing<struct offload_task *, nullptr>(64, node);
+                // Each ACC ctx gets handle to
+                    // a) input queue that it needs to take from,
+                    // b) completion queues that it needs to feed,
+                    // c) and IO threads that it needs to wake
 
-					// Allocate device buffer and retrieve its RAS offset
-					off_t host_resultbuf_base_ra = bufarray_get_ra(&vdev->resultbuf_array, 0);
-					//assert ( host_resultbuf_base_ra >= 0 );
-					send_ctrlmsg(vdev->ctrl_epd, vdev->ctrlbuf, OP_MALLOC, &vdev->inputbuf_size, &vdev->resultbuf_size, &vdev->pipeline_depth, &host_resultbuf_base_ra);
-					unsigned ctrlbuf_offset = 0;
-					response = *((int32_t *) vdev->ctrlbuf);
-					ctrlbuf_offset += sizeof(int32_t);
-					vdev->remote_writebuf_base_ra = *((off_t *) (vdev->ctrlbuf + ctrlbuf_offset));
-					// Register local poll-ring's base VA and send its RAS offset for task-done polling
-					log_device(vdev->device_id, "Local poll ring registered at RA %lld (length %'d, allocated size %'dB)\n", vdev->poll_ring.ring_ra, (int) vdev->poll_ring.len, (int) vdev->poll_ring.alloc_bytes);
-					send_ctrlmsg(vdev->ctrl_epd, vdev->ctrlbuf, OP_REG_POLLRING, &vdev->poll_ring.len, &vdev->poll_ring.ring_ra, NULL, NULL);
-					response = *((int32_t *) vdev->ctrlbuf);
-					if ( response != RESP_SUCCESS ) {
-						rte_exit(EXIT_FAILURE, "Error sending registered poll ring address for vdevice %d\n", vdev->device_id);
-					}
-					vdev->remote_poll_ring_window = *((off_t *) (vdev->ctrlbuf + sizeof(int32_t)));
-
-					log_device(vdev->device_id, "Received remote poll ring RA at %lld\n", vdev->remote_poll_ring_window);
-					vdevs_in_node[node].push_back(vdev);
-				}
-			}
-        } 
-#endif /* !OFFLOAD_NOOP */
+                // Event loop initialization for ACC threads
+                actx->offload_input_watcher = (struct ev_async *)
+                            rte_malloc_socket("ev_async", sizeof(struct ev_async), RTE_CACHE_LINE_SIZE, node);
+                ev_async_init(actx->offload_input_watcher, threadsync_failed_cb); // FIXME: confirm if it's the right way to init this
+                //actx->offload_complete_watcher = (struct ev_async *) rte_malloc_socket("ev_async", sizeof(struct ev_async), RTE_CACHE_LINE_SIZE, node);
+                actx->terminate_watcher = (struct ev_async *)
+                            rte_malloc_socket("ev_async", sizeof(struct ev_async), RTE_CACHE_LINE_SIZE, node);
+                ev_async_init(actx->terminate_watcher, NULL);
+                knapp_bind_cpu(actx->my_cpu);
+                pthread_yield();
+                assert ( 0 == pthread_create(&actx->my_thread, NULL, offload_loop, (void *) actx) );
+                knapp_bind_cpu(0);
+            } // End of per-ACC_thread initialization
+        } // End of ACC threads initialization
         // Run the loop over devices first and setup the mapping between config-indexes and rte-indexes
         // Also, initialize tx-queues
         for (int dev_idx = 0, cfg_port_idx = 0; dev_idx < num_devices_registered; dev_idx++, cfg_port_idx++) {
@@ -896,10 +1032,10 @@ static void load_config(std::string& filename) {
             ctx->my_cpu = my_cpu;
             ctx->io_batch_size = io_batch_size;
             ctx->offload_batch_size = offload_batch_size;
-			ctx->max_tasks_in_flight = 0;
             snprintf(ringname, RTE_RING_NAMESIZE, "dropq-node%d-lcore%d", (int)node, ctx->my_cpu);
             ctx->drop_queue = rte_ring_create(ringname, io_batch_size * KNAPP_MAX_QUEUES_PER_THREAD, node, RING_F_SC_DEQ);
             snprintf(ringname, RTE_RING_NAMESIZE, "complq-node%d-lcore%d", (int)node, ctx->my_cpu);
+            ctx->offload_completion_queue = rte_ring_create(ringname, KNAPP_COMPLETION_QUEUE_SIZE, node, RING_F_SC_DEQ);
             assert(ctx->drop_queue != NULL);
             ctx->port_stats = (struct io_port_stat *) rte_malloc_socket("io_port_stat", sizeof(struct io_port_stat) * num_devices_registered, RTE_CACHE_LINE_SIZE, node);
             memset(ctx->port_stats, 0, sizeof(struct io_port_stat) * ctx->num_ports);
@@ -924,6 +1060,12 @@ static void load_config(std::string& filename) {
                 fprintf(stderr, "rte_mempool_create: %s\n", rte_strerror(rte_errno));
                 exit(1);
             }
+
+            //snprintf(mpname, RTE_MEMPOOL_NAMESIZE, "offtask-n%d-lc%d", (int)ctx->my_node, (int)ctx->my_cpu);
+            //ctx->offload_task_mempool = rte_mempool_create(mpname, KNAPP_MAX_OFFLOADS_IN_FLIGHT,
+                    //sizeof(struct offload_task), 50, 0,
+                    //NULL, NULL, NULL, NULL, node, 0);
+            //assert ( ctx->offload_task_mempool != NULL );
 
             {
                 // Capture 'RX-queue to io-core' mapping
@@ -966,8 +1108,23 @@ static void load_config(std::string& filename) {
                     ctx->ports[i_port].port_idx = i_port;
                     rte_eth_macaddr_get(ctx->txq_port_indexes[i_port], &ctx->ports[i_port].addr);
                 }
+                /*
+                fprintf(stderr, "thread %d inv_port_map: [ ", ctx->my_cfg_cpu);
+                for (int itx = 0; itx < 8; itx++) {
+                    fprintf(stderr, "(%d->%d) ", itx, ctx->inv_port_map[itx]);
+                }
+                fprintf(stderr, "\n");
+
+                fprintf(stderr, "thread %d txq_port_indexes: [ ", ctx->my_cfg_cpu);
+                for (int itx = 0; itx < 8; itx++) {
+                    fprintf(stderr, "(%d->%d) ", itx, ctx->txq_port_indexes[itx]);
+                }
+                fprintf(stderr, "\n");
+                */
+
             }
             {
+                new (&ctx->offload_task_q) FixedRing<struct offload_task *, nullptr>(KNAPP_OFFLOAD_TASKQ_SIZE, node);
                 std::vector<int> vdevice_indexes;
                 get_elems_pointing_from(io_cores_to_vdevices, cfg_cpu, vdevice_indexes);
                 fprintf(stderr, "IO thread %d mapped to vDevices: [ ", cfg_cpu);
@@ -975,11 +1132,8 @@ static void load_config(std::string& filename) {
                 new (&ctx->vdevs) FixedRing<struct vdevice *, nullptr>(KNAPP_MAX_VDEVICES_PER_IOTHREAD, node);
                 for ( unsigned i = 0; i < vdevice_indexes.size(); i++ ) {
                     fprintf(stderr, "%d ", vdevice_indexes[i]);
-					struct vdevice *vdev_to_add = vdevs_in_node[node][vdevice_indexes[i]];
-                    ctx->vdevs.push_back(vdev_to_add);
-					ctx->max_tasks_in_flight += (vdev_to_add->pipeline_depth + 1);
+                    ctx->vdevs.push_back(actx->vdevs[vdevice_indexes[i]]);
                 }
-
                 fprintf(stderr, "]\n");
             }
             // Initialize event loop and watchers
@@ -999,6 +1153,8 @@ static void load_config(std::string& filename) {
 
 int main(int argc, char **argv)
 {
+	if(check_collision(PROGRAM_NAME, COLLISION_USE_TEMP | COLLISION_NOWAIT) < 0)
+		return -1;
     unsigned loglevel = RTE_LOG_WARNING;
     int ret;
 
@@ -1173,6 +1329,7 @@ int main(int argc, char **argv)
                     fprintf(stderr, "\n");
                 }
             }
+            pthread_barrier_wait(per_node_offload_init_barrier[node]);
         }
     }
     begin = knapp_get_usec();
