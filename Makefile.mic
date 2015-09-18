@@ -1,7 +1,7 @@
 .PHONY: all clean
 
 TARGET = knapp-mic
-SRCS   = utils.cc jsoncpp.cpp knapp-mic.cc $(wildcard apps/*.cc)
+SRCS   = utils.cc jsoncpp.cc knapp-mic.cc $(wildcard apps/*.cc)
 OBJS = $(SRCS:.cc=.o)
 CC       = icpc 
 #CC       = icpc -std=c++11 -mmic -debug all
@@ -14,7 +14,7 @@ LDFLAGS = -pthread -lscif -lrt
 HEADERS = $(wildcard *.h) $(wildcard *.hpp) $(wildcard apps/*.h) $(wildcard apps/*.hpp) $(wildcard json/*.hpp) $(wildcard json/*.h)
 
 DEPS = .make.dep
-all: $(DEPS) $(TARGET)
+all: $(TARGET)
 
 $(TARGET): $(OBJS)
 	$(CC) $(CFLAGS) $(OBJS) -o $@ $(LDFLAGS) 
