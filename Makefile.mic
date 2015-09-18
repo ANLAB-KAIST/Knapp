@@ -1,5 +1,8 @@
+.PHONY: all clean
+
 TARGET = knapp-mic
-OBJS   = utils.cc jsoncpp.cpp knapp-mic.cc $(shell ls apps/*.cc)
+SRCS   = utils.cc jsoncpp.cpp knapp-mic.cc $(wildcard apps/*.cc)
+OBJS = $(SRCS:.cc=.o)
 CC       = icpc 
 #CC       = icpc -std=c++11 -mmic -debug all
 CFLAGS   = -std=c++11 -mmic -Wall -fPIC -DVECTORIZE_IPV4#-DEMPTY_CYCLES ##-g #-I/usr/include#-vec-report5 #-opt-streaming-store always #-S
@@ -8,15 +11,22 @@ CFLAGS   = -std=c++11 -mmic -Wall -fPIC -DVECTORIZE_IPV4#-DEMPTY_CYCLES ##-g #-I
 #LDFLAGS = -debug all -g
 LDFLAGS = -pthread -lscif -lrt
 
-all: $(TARGET)
+HEADERS = $(wildcard *.h) $(wildcard *.hpp) $(wildcard apps/*.h) $(wildcard apps/*.hpp) $(wildcard json/*.hpp) $(wildcard json/*.h)
 
-$(TARGET):
+DEPS = .make.dep
+all: $(DEPS) $(TARGET)
+
+$(TARGET): $(OBJS)
 	$(CC) $(CFLAGS) $(OBJS) -o $@ $(LDFLAGS) 
 #rm -f $(OBJS)
+
+-include $(DEPS)
 
 .cc.o:
 	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:
-	@rm -f $(TARGET) *.o
+	@rm -f $(TARGET) *.o apps/*.o json/*.o
 
+$(DEPS): $(SRCS) $(HEADERS)
+	@$(CC) $(CFLAGS) -MM $(SRCS)  > $(DEPS);

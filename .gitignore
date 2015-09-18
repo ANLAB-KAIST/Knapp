@@ -1,0 +1,6 @@
+*.o
+**/*.o
+.*
+knapp-host
+knapp-mic
+!.gitignore
