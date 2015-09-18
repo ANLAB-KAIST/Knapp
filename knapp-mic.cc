@@ -90,6 +90,7 @@ int core_util[NUM_CORES][MAX_THREADS_PER_CORE];
 
 uint16_t *g_tbl24 = NULL;
 uint16_t *g_tbllong = NULL;
+RoutingTableV6* g_routev6 = NULL;
 
 void *worker_thread_loop(void *arg) {
 	struct worker_thread_info *info = (struct worker_thread_info *) arg;

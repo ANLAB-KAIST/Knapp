@@ -495,6 +495,7 @@ inline uint128_t mask(const uint128_t aa, int len)
 
 typedef struct
 {
+	void init_table();
     int from_random(int seed, int count);
     int from_file(const char* filename);
     void add(uint128_t addr, int len, uint16_t dest);

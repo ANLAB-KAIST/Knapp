@@ -793,8 +793,10 @@ int pollring_put(struct poll_ring *r, int poll_id) {
 
 extern uint16_t *g_tbl24;
 extern uint16_t *g_tbllong;
+extern RoutingTableV6* g_routev6;
 
 void init_global_refdata() {
+	log_info("Initializing IPv4 routing table.\n");
     size_t TBL24_size = ((1 << 24) + 1) * sizeof(uint16_t);
     size_t TBLlong_size = ((1 << 24) + 1) * sizeof(uint16_t);
     g_tbl24 = (uint16_t *) mem_alloc(TBL24_size, PAGE_SIZE);
@@ -802,6 +804,20 @@ void init_global_refdata() {
     memset(g_tbl24, 0, TBL24_size);
     memset(g_tbllong, 0, TBLlong_size);
     ipv4_load_rib_from_file("routing_info.txt", g_tbl24, g_tbllong);
+	log_info("Done.\n");
+	log_info("Initializing IPv6 routing table.\n");
+    size_t RouteV6_size = sizeof(RoutingTableV6);
+	log_info("Allocating %lu bytes.\n", RouteV6_size);
+    g_routev6 = (RoutingTableV6 *) mem_alloc(RouteV6_size, PAGE_SIZE);
+	g_routev6->init_table();
+	
+	int seed = 7659243;
+    int count = 200000;
+	log_info("Generating random (%d, %d)...\n", seed, count);
+	g_routev6->from_random(seed, count);
+	log_info("Building...\n", seed, count);
+	g_routev6->build();
+	log_info("Done.\n");
 }
 
 void build_vdevice(Json::Value& conf, struct vdevice **pvdev) {

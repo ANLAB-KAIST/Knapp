@@ -60,6 +60,14 @@ void app_ipv6(struct worker *w) {
 }
 
 
+void RoutingTableV6::init_table()
+{
+	for (int i = 0; i < 128; i++) {
+            // Currently all tables have the same DEFAULT_TABLE_SIZE;
+            m_Tables[i].init_table();
+    }
+}
+
 int RoutingTableV6::from_random(int seed, int count)
 {
     srand(seed);
