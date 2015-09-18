@@ -11,7 +11,7 @@ CFLAGS   = -std=c++11 -mmic -Wall -fPIC -DVECTORIZE_IPV4#-DEMPTY_CYCLES ##-g #-I
 #LDFLAGS = -debug all -g
 LDFLAGS = -pthread -lscif -lrt
 
-HEADERS = $(wildcard *.h) $(wildcard *.hpp) $(wildcard apps/*.h) $(wildcard apps/*.hpp) $(wildcard json/*.hpp) $(wildcard json/*.h)
+HEADERS= $(wildcard *.h) $(wildcard *.hpp) $(wildcard apps/*.h) $(wildcard apps/*.hpp) $(wildcard json/*.hpp) $(wildcard json/*.h)
 
 DEPS = .make.dep
 all: $(TARGET)
@@ -26,7 +26,7 @@ $(TARGET): $(OBJS)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:
-	@rm -f $(TARGET) *.o apps/*.o json/*.o
+	@rm -f $(TARGET) $(OBJS)
 
 $(DEPS): $(SRCS) $(HEADERS)
 	@$(CC) $(CFLAGS) -MM $(SRCS)  > $(DEPS);

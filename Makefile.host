@@ -11,10 +11,26 @@ CFLAGS = -std=c++11 -march=native -Wall -I$(RTE_SDK)/include -O3 #-DOFFLOAD_NOOP
 #LDFLAGS = -L$(RTE_SDK)/lib -pthread -lev -lscif -lrt -lnuma -Wl,--whole-archive -Wl,--start-group $(patsubst %,-l%,$(KNAPP_RTE_LIBS)) -Wl,--end-group -Wl,--no-whole-archive -ldl
 LDFLAGS = -L$(RTE_SDK)/lib -pthread -lev -lrt -lscif -lnuma -Wl,--whole-archive -Wl,--start-group $(patsubst %,-l%,$(KNAPP_RTE_LIBS)) -Wl,--end-group -Wl,--no-whole-archive -ldl
 
-.PHONY: clean
+.PHONY: all clean
 
-knapp-host: knapp-host.cc
-	g++ $(CFLAGS) utils.cc offloadtask.cc jsoncpp.cpp knapp-host.cc -o knapp-host $(LDFLAGS)
+HEADERS= $(wildcard *.h) $(wildcard *.hpp) $(wildcard apps/*.h) $(wildcard apps/*.hpp) $(wildcard json/*.hpp) $(wildcard json/*.h)
+SRCS= utils.cc offloadtask.cc jsoncpp.cc knapp-host.cc
+OBJS = $(SRCS:.cc=.o)
+
+DEPS = .make.dep
+
+all: knapp-host
+
+-include $(DEPS)
+
+knapp-host: $(OBJS)
+	g++ $(CFLAGS) $(OBJS) -o knapp-host $(LDFLAGS)
+
+.cc.o:
+	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:
-	rm knapp-host
+	@rm -f knapp-host $(OBJS)
+
+$(DEPS): $(SRCS) $(HEADERS)
+	@$(CC) $(CFLAGS) -MM $(SRCS)  > $(DEPS);
