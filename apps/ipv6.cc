@@ -80,15 +80,15 @@ int RoutingTableV6::from_random(int seed, int count)
 void RoutingTableV6::add(uint128_t addr, int len, uint16_t dest)
 {
     assert(len > 0 && len < 129);
-    m_Tables[len-1]->insert(mask(addr,len), dest);
+    m_Tables[len-1].insert(mask(addr,len), dest);
 }
 
 int RoutingTableV6::build()
 {
     for (int i = 0; i < 128; i++){
-        HashTable128 *table = m_Tables[i];
+        HashTable128 &table = m_Tables[i];
         int len = i;
-        for (Iterator i = table->begin(); i != table->end(); ++i) {
+        for (Iterator i = table.begin(); i != table.end(); ++i) {
             int start = 0;
             int end = 127;
             int len_marker = (start + end) / 2;
@@ -96,7 +96,7 @@ int RoutingTableV6::build()
                 uint128_t temp = mask(*i, len_marker + 1);
                 uint16_t marker_dest = lookup(&temp);
                 if (len_marker < len) {
-                    m_Tables[len_marker]->insert(mask(*i, len_marker +1), marker_dest, IPV6_HASHTABLE_MARKER);
+                    m_Tables[len_marker].insert(mask(*i, len_marker +1), marker_dest, IPV6_HASHTABLE_MARKER);
                 }
 
                 if (len < len_marker) {
@@ -125,7 +125,7 @@ uint16_t RoutingTableV6::lookup(uint128_t *ip)
     do {
         int len = (start + end) / 2;
 
-        uint16_t temp = m_Tables[len]->find(mask(*ip, len + 1));
+        uint16_t temp = m_Tables[len].find(mask(*ip, len + 1));
 
         if (result == 0) {
             end = len - 1;
@@ -164,6 +164,13 @@ uint32_t HashTable128::find(uint128_t key)
     return *ret;
 }
 
+void HashTable128::init_table()
+{
+	m_TableSize = IPV6_DEFAULT_HASHTABLE_SIZE;
+    //m_Table = new Item[m_TableSize * 2]; //allocate double space. bottom half will be used for chaining
+    memset(m_Table, 0, sizeof(Item) * m_TableSize * 2);
+    m_NextChain = m_TableSize;
+}
 
 int HashTable128::insert(uint128_t key, uint16_t val, uint16_t state)
 {

@@ -465,13 +465,14 @@ typedef struct
     uint32_t find(uint128_t key);
 
     //iterates non marker
+	void init_table();
     
     Iterator begin() { return Iterator(m_Table, m_TableSize, 0);}
     Iterator end() { return Iterator(m_Table, m_TableSize, m_NextChain);}
 
     int m_TableSize;
     int m_NextChain;
-    Item *m_Table;
+    Item m_Table[IPV6_DEFAULT_HASHTABLE_SIZE*2];
 }HashTable128;
 
 inline uint128_t mask(const uint128_t aa, int len)
@@ -502,7 +503,7 @@ typedef struct
     int build();
     uint16_t lookup(uint128_t *ip);
 
-    HashTable128 *m_Tables[128];
+    HashTable128 m_Tables[128];
 }RoutingTableV6;
 
 
