@@ -995,6 +995,7 @@ void init_worker_refdata(struct vdevice *vdev) {
             pu->ipv4.TBLlong = g_tbllong;
             break;
         case APP_IPV6:
+			pu->ipv6.table = g_routev6;
             break;
         case APP_IPSEC:
             break;

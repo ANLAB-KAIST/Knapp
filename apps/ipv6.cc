@@ -35,10 +35,30 @@ static inline void app_ipv6_vector(struct worker *w) {
 		
 		uint128_t dest_addr;
 		uint16_t lookup_result = 0xffff;
-		dest_addr.u64[1] = ip6h->daddr.u64[0];
-		dest_addr.u64[0] = ip6h->daddr.u64[1];
-		dest_addr.u64[1] = ntohll(dest_addr.u64[1]);
-		dest_addr.u64[0] = ntohll(dest_addr.u64[0]);
+		
+		//dest_addr.u64[1] = ntohll(ip6h->daddr.u64[0]);
+		//static uint64_t ntohll(uint64_t val)
+		{
+			dest_addr.u64[1] |= (((ip6h->daddr.u64[0]) >> 56) & 0x00000000000000ff);
+			dest_addr.u64[1] |= (((ip6h->daddr.u64[0]) >> 40) & 0x000000000000ff00);
+			dest_addr.u64[1] |= (((ip6h->daddr.u64[0]) >> 24) & 0x0000000000ff0000);
+			dest_addr.u64[1] |= (((ip6h->daddr.u64[0]) >>  8) & 0x00000000ff000000);
+			dest_addr.u64[1] |= (((ip6h->daddr.u64[0]) <<  8) & 0x000000ff00000000);
+			dest_addr.u64[1] |= (((ip6h->daddr.u64[0]) << 24) & 0x0000ff0000000000);
+			dest_addr.u64[1] |= (((ip6h->daddr.u64[0]) << 40) & 0x00ff000000000000);
+			dest_addr.u64[1] |= (((ip6h->daddr.u64[0]) << 56) & 0xff00000000000000);
+		}
+		//dest_addr.u64[0] = ntohll(ip6h->daddr.u64[1]);
+		{
+			dest_addr.u64[0] |= (((ip6h->daddr.u64[1]) >> 56) & 0x00000000000000ff);
+			dest_addr.u64[0] |= (((ip6h->daddr.u64[1]) >> 40) & 0x000000000000ff00);
+			dest_addr.u64[0] |= (((ip6h->daddr.u64[1]) >> 24) & 0x0000000000ff0000);
+			dest_addr.u64[0] |= (((ip6h->daddr.u64[1]) >>  8) & 0x00000000ff000000);
+			dest_addr.u64[0] |= (((ip6h->daddr.u64[1]) <<  8) & 0x000000ff00000000);
+			dest_addr.u64[0] |= (((ip6h->daddr.u64[1]) << 24) & 0x0000ff0000000000);
+			dest_addr.u64[0] |= (((ip6h->daddr.u64[1]) << 40) & 0x00ff000000000000);
+			dest_addr.u64[0] |= (((ip6h->daddr.u64[1]) << 56) & 0xff00000000000000);
+		}
 
 		//do with dest_addr, result, lookup_result
 		{
