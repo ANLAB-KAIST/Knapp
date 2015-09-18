@@ -40,9 +40,9 @@
 				"core" : 7,
 				"vdevices" : [
 					{
-						"app": "ipv6",
+						"app": "ipv4",
 						"offload_cores": {
-							"range": [0, 7]
+							"range": [0, 1]
 						},
 						"HTs_per_offload_core": 2,
 						"pipeline_depth": 128,

@@ -97,10 +97,16 @@ void app_ipv4(struct worker *w) {
         iph->check = ~htons(sum + (sum >> 16));
         result = CONTINUE;
 write_result:
-        *((int32_t *)(w->outputbuf + (PER_PACKET_RESULT_SIZE_IPV4 * ipacket))) = result;
+        uint8_t *base = w->outputbuf + (PER_PACKET_RESULT_SIZE_IPV4 * ipacket);
+		*((int32_t *) base) = result;
+		base += sizeof(int32_t);
+		*((uint16_t *) base) = iph->ttl;
+		base += sizeof(uint16_t);
+		*((uint16_t *) base) = sum;
     }
 #else
     int payload_stride = w->input_stride;
+    int output_stride = w->output_stride;
     int num_packets = w->num_packets;
     uint8_t *inputbuf_base = w->inputbuf;
     uint8_t *outputbuf_base = w->outputbuf;
@@ -134,11 +140,13 @@ write_result:
     i32vec v_top3B_mask = i32vec_set_all(0x0000ff00);
     i32vec v_top4B_mask = i32vec_set_all(0x000000ff);
     i32vec v_ip_csum_offset = i32vec_set_base_st(ip_csum_offset, payload_stride);
-
     i32vec v_drop = i32vec_set_all(DROP);
     i32vec v_slowpath = i32vec_set_all(SLOWPATH);
     i32vec v_continue = i32vec_set_all(CONTINUE);
 
+	i32vec v_csum_store_offset = i32vec_set_base_st(6, output_stride);
+	i32vec v_dttl_store_offset = i32vec_set_base_st(4, output_stride);
+	i32vec v_pres_store_offset = i32vec_set_base_st(0, output_stride);
     for (int ipacket = 0; ipacket < num_packets; ipacket += NUM_INT32_PER_VECTOR) {
         int to_process = MIN(NUM_INT32_PER_VECTOR, num_packets - ipacket);
         uint8_t *inputbuf = inputbuf_base + (ipacket * payload_stride);
@@ -261,7 +269,7 @@ write_result:
         //printmask(m_valid_so_far);
         i32vec v_ip_ttl_dec = i32vec_mask_sub(v_ip_ttl, v_one, m_valid_so_far, v_zero);
         // TODO: MERGE GATHER SCATTER FOR TTL AND CHECKSUM UPDATES SINCE THEY FIT WITHIN SAME WORD
-        i32vec_mask_scatter_u8_nt(inputbuf, v_ip_ttl_offset, v_ip_ttl_dec, m_valid_so_far);
+        i32vec_mask_scatter_u16(outputbuf, v_dttl_store_offset, v_ip_ttl_dec, m_valid_so_far);
         i32vec v_ip_csum_n = i32vec_mask_gather_u16(inputbuf, v_ip_csum_offset, m_valid_so_far, v_zero);
         i32vec v_ip_csum = i32vec_mask_or(
 				i32vec_mask_and(v_top4B_mask, i32vec_mask_lrshift_i32(v_ip_csum_n, 8, m_valid_so_far, v_zero), m_valid_so_far, v_zero), 
@@ -276,7 +284,7 @@ write_result:
                                 i32vec_mask_and(v_top3B_mask, i32vec_mask_lshift_i32(v_ip_new_csum_h, 8, m_valid_so_far, v_zero), m_valid_so_far, v_zero), m_valid_so_far, v_zero);
         i32vec v_ip_new_csum = i32vec_mask_andnot(v_ip_new_csum_not, v_ip_new_csum_not, m_valid_so_far, v_zero);
 
-        i32vec_mask_scatter_u16_nt(inputbuf, v_ip_csum_offset, v_ip_new_csum, m_valid_so_far);
+        i32vec_mask_scatter_u16(outputbuf, v_csum_store_offset, v_ip_new_csum, m_valid_so_far);
         //printmask(m_valid_so_far);
         i32vec v_result = i32vec_mask_xor(v_drop, v_drop, m_is_slowpath, v_drop);
                 //printvec(v_result);
@@ -292,7 +300,7 @@ write_result:
             //printvec(v_result);
         }
 		*/
-        i32vec_mask_store_nt(outputbuf, v_result, m_within_range);
+        i32vec_mask_scatter_nt(outputbuf, v_pres_store_offset, v_result, m_within_range);
     }
 #endif
 #endif

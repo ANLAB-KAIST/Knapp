@@ -103,7 +103,7 @@
 //#define PER_PACKET_RESULT_SIZE_IPV6 (sizeof(struct ipv6_hdr) + sizeof(int32_t))
 #define PER_PACKET_RESULT_SIZE_IPV6 (sizeof(int32_t))
 #endif
-#define PER_PACKET_RESULT_SIZE_IPV4 (sizeof(int32_t))
+#define PER_PACKET_RESULT_SIZE_IPV4 (sizeof(int32_t) + sizeof(uint16_t) + sizeof(uint16_t)) // Result, new ttl, new csum
 
 #define MAX_LATENCY         10000  /* from 0 usec to 9.999 msec */
 #define MAX_FLOWS           16384

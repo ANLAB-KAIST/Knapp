@@ -65,14 +65,23 @@ size_t offload_task::serialize() {
 pktprocess_result_t offload_task::offload_postproc(int index) {
 #ifndef OFFLOAD_NOOP
     pktprocess_result_t result;
-    //uint8_t *pbuf = rte_pktmbuf_mtod(pkts[index]->mbuf, uint8_t *);
+    uint8_t *pbuf = rte_pktmbuf_mtod(pkts[index]->mbuf, uint8_t *);
+	uint8_t *res_base;
 	int32_t res;
+	struct iphdr *iph = (struct iphdr *)(((struct ether_hdr *) pbuf) + 1);
     assert ( index >= 0 && index < (int) count );
     switch(apptype) {
         case APP_IPV4_LOOKUP:
         case APP_IPV4:
-            res = ((int32_t *) resultbuf)[index];
-            result = (pktprocess_result_t) res;
+			res_base = resultbuf + (PER_PACKET_RESULT_SIZE_IPV4 * index);
+			res = *((int32_t *) res_base);
+			res_base += sizeof(int32_t);
+			result = (pktprocess_result_t) res;
+			if ( result == CONTINUE ) {
+				iph->ttl = *((uint16_t *) res_base);
+				res_base += sizeof(uint16_t);
+				iph->check = *((uint16_t *) res_base);
+			}
             return result;
 		case APP_IPV6:
 			//struct ipv6hdr *ipv6 = (struct ipv6hdr *)(((struct ether_hdr *) pbuf) + 1);
