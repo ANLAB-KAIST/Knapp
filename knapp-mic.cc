@@ -291,7 +291,7 @@ int main (int argc, char *argv[])
             exit(1);
         }
         CPU_ZERO_S(cpu_setsize, cpuset_per_lcore[lcore]);
-        CPU_SET_S((lcore + 1) % num_lcores, cpu_setsize, cpuset_per_lcore[lcore]); // ROTATE BY 1 (Knights Corner specific)
+        CPU_SET_S(lcore, cpu_setsize, cpuset_per_lcore[lcore]); // ROTATE BY 1 (Knights Corner specific)
         pthread_attr_init(&attr_per_lcore[lcore]);
         assert ( 0 == pthread_attr_setdetachstate(&attr_per_lcore[lcore], PTHREAD_CREATE_JOINABLE) );
         assert ( 0 == pthread_attr_setaffinity_np(&attr_per_lcore[lcore], cpu_setsize, cpuset_per_lcore[lcore]) );
