@@ -2,6 +2,7 @@
 #define _LIBVEC_HH_
 
 #ifdef __MIC__
+
 #include <immintrin.h>
 typedef __m512i i32vec;
 typedef __mmask16 vmask;
@@ -10,9 +11,14 @@ typedef __mmask16 vmask;
 #define i32vec_set(e15, e14, e13, e12, e11, e10, e9, e8, e7, e6, e5, e4, e3, e2, e1, e0) _mm512_set_epi32(e15, e14, e13, e12, e11, e10, e9, e8, e7, e6, e5, e4, e3, e2, e1, e0)
 #define i32vec_set_zero() _mm512_setzero_epi32()
 
+#define i32vec_mask_set(vec, mask, val) _mm512_mask_set1_epi32(vec, mask, val)
+
+
+#define mask2int(x) _mm512_mask2int(x)
 #define int2mask(x) _mm512_int2mask(x)
 #define mask_or(x, y) _mm512_kor(x, y)
 #define mask_and(x, y) _mm512_kand(x, y)
+#define mask_not(x) _mm512_knot(x)
 
 #define i32vec_and(x, y) _mm512_and_epi32(x, y)
 #define i32vec_or(x, y) _mm512_or_epi32(x, y)
@@ -33,23 +39,24 @@ typedef __mmask16 vmask;
 #define i32vec_arshift_i32(x, y) _mm512_srai_epi32(x, y) // Arithmetic r-shift elements in x by y
 
 // Masked variants
-#define i32vec_mask_lshift_vec(x, y, mask, def) _mm512_mask_sllv_epi32(def, mask, x, y) 
-#define i32vec_mask_lrshift_vec(x, y, mask, def) _mm512_mask_srlv_epi32(def, mask, x, y) 
-#define i32vec_mask_arshift_vec(x, y, mask, def) _mm512_mask_srav_epi32(def, mask, x, y) 
-#define i32vec_mask_lshift_i32(x, y, mask, def) _mm512_mask_slli_epi32(def, mask, x, y) 
-#define i32vec_mask_lrshift_i32(x, y, mask, def) _mm512_mask_srli_epi32(def, mask, x, y) 
-#define i32vec_mask_arshift_i32(x, y, mask, def) _mm512_mask_srai_epi32(def, mask, x, y) 
+#define i32vec_mask_lshift_vec(x, y, mask, def) _mm512_mask_sllv_epi32(def, mask, x, y)
+#define i32vec_mask_lrshift_vec(x, y, mask, def) _mm512_mask_srlv_epi32(def, mask, x, y)
+#define i32vec_mask_arshift_vec(x, y, mask, def) _mm512_mask_srav_epi32(def, mask, x, y)
+#define i32vec_mask_lshift_i32(x, y, mask, def) _mm512_mask_slli_epi32(def, mask, x, y)
+#define i32vec_mask_lrshift_i32(x, y, mask, def) _mm512_mask_srli_epi32(def, mask, x, y)
+#define i32vec_mask_arshift_i32(x, y, mask, def) _mm512_mask_srai_epi32(def, mask, x, y)
 
 #define i32vec_add(x, y) _mm512_add_epi32(x, y)
 #define i32vec_adc(x, y, carry_in, p_carry_out) _mm512_adc_epi32(x, carry_in, y, p_carry_out)
 #define i32vec_sub(x, y) _mm512_sub_epi32(x, y)
 #define i32vec_mask_add(x, y, mask, def) _mm512_mask_add_epi32(def, mask, x, y)
+#define i32vec_mask_mul(x, y, mask, def) _mm512_mask_mul_epi32(def, mask, x, y)
 #define i32vec_mask_adc(x, y, mask, carry_in, p_carry_out) _mm512_mask_adc_epi32(x, mask, carry_in, y, p_carry_out) // Resulting vector element falls back to value in x if mask element is not set
 #define i32vec_mask_sub(x, y, mask, def) _mm512_mask_sub_epi32(def, mask, x, y)
 
 
 // mask[i] <- 1 iff 'x[i] OP y[i]'
-#define i32vec_eq(x, y) _mm512_cmp_epi32_mask(x, y, _MM_CMPINT_EQ) 
+#define i32vec_eq(x, y) _mm512_cmp_epi32_mask(x, y, _MM_CMPINT_EQ)
 #define i32vec_ne(x, y) _mm512_cmp_epi32_mask(x, y, _MM_CMPINT_NE)
 #define i32vec_gt(x, y) _mm512_cmp_epi32_mask(x, y, _MM_CMPINT_GT)
 #define i32vec_ge(x, y) _mm512_cmp_epi32_mask(x, y, _MM_CMPINT_GE)

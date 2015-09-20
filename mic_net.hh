@@ -368,7 +368,7 @@ typedef struct
     int update(uint128_t addr, int len, uint16_t dest);
     int remove(uint128_t addr, int len);
     int build();
-    uint16_t lookup(uint128_t *ip);
+    uint16_t lookup(uint128_t ip);
 
     HashTable128 m_Tables[128];
 }RoutingTableV6;

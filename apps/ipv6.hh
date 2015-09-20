@@ -17,6 +17,55 @@ void app_ipv6(struct worker *arg);
   c -= a; c -= b; c ^= (b>>15); \
 }
 
+#define __jhash_mix_vec(a, b, c, mask, def) \
+{ \
+  a = i32vec_mask_sub(a, b, mask, v_zero); \
+  a = i32vec_mask_sub(a, c, mask, v_zero); \
+  a = i32vec_mask_xor(a, \
+		  i32vec_mask_lrshift_i32(c, 13, mask, def), \
+		  mask, def);  \
+  b = i32vec_mask_sub(b, c, mask, def); \
+  b = i32vec_mask_sub(b, a, mask, def); \
+  b = i32vec_mask_xor(b, \
+  		  i32vec_mask_lshift_i32(a, 8, mask, def), \
+  		  mask, def); \
+  c = i32vec_mask_sub(c, a, mask, def); \
+  c = i32vec_mask_sub(c, b, mask, def); \
+  c = i32vec_mask_xor(c, \
+    		  i32vec_mask_lrshift_i32(b, 13, mask, def), \
+    		  mask, def); \
+  a = i32vec_mask_sub(a, b, mask, def); \
+  a = i32vec_mask_sub(a, c, mask, def); \
+  a = i32vec_mask_xor(a, \
+		  i32vec_mask_lrshift_i32(c, 12, mask, def), \
+		  mask, def);  \
+  b = i32vec_mask_sub(b, c, mask, def); \
+  b = i32vec_mask_sub(b, a, mask, def); \
+  b = i32vec_mask_xor(b, \
+		  i32vec_mask_lshift_i32(a, 16, mask, def), \
+		  mask, def); \
+  c = i32vec_mask_sub(c, a, mask, def); \
+  c = i32vec_mask_sub(c, b, mask, def); \
+  c = i32vec_mask_xor(c, \
+		  i32vec_mask_lrshift_i32(b, 5, mask, def), \
+		  mask, def); \
+  a = i32vec_mask_sub(a, b, mask, def); \
+  a = i32vec_mask_sub(a, c, mask, def); \
+  a = i32vec_mask_xor(a, \
+		  i32vec_mask_lrshift_i32(c, 3, mask, def), \
+		  mask, def); \
+  b = i32vec_mask_sub(b, c, mask, def); \
+  b = i32vec_mask_sub(b, a, mask, def); \
+  b = i32vec_mask_xor(b, \
+		  i32vec_mask_lshift_i32(a, 10, mask, def), \
+		  mask, def); \
+  c = i32vec_mask_sub(c, a, mask, def); \
+  c = i32vec_mask_sub(c, b, mask, def); \
+  c = i32vec_mask_xor(c, \
+		  i32vec_mask_lrshift_i32(b, 15, mask, def), \
+		  mask, def); \
+}
+
 /* The golden ration: an arbitrary value */
 #define JHASH_GOLDEN_RATIO  0x9e3779b9
 
