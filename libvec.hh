@@ -11,8 +11,7 @@ typedef __mmask16 vmask;
 #define i32vec_set(e15, e14, e13, e12, e11, e10, e9, e8, e7, e6, e5, e4, e3, e2, e1, e0) _mm512_set_epi32(e15, e14, e13, e12, e11, e10, e9, e8, e7, e6, e5, e4, e3, e2, e1, e0)
 #define i32vec_set_zero() _mm512_setzero_epi32()
 
-#define i32vec_mask_set(vec, mask, val) _mm512_mask_set1_epi32(vec, mask, val)
-
+#define i32vec_mask_mov(dest, mask, src) _mm512_mask_mov_epi32(dest, mask, src)
 
 #define mask2int(x) _mm512_mask2int(x)
 #define int2mask(x) _mm512_int2mask(x)
@@ -47,10 +46,13 @@ typedef __mmask16 vmask;
 #define i32vec_mask_arshift_i32(x, y, mask, def) _mm512_mask_srai_epi32(def, mask, x, y)
 
 #define i32vec_add(x, y) _mm512_add_epi32(x, y)
+#define i32vec_mul(x, y) _mm512_mullo_epi32(x, y)
+#define i32vec_mul_high(x, y) _mm512_mulhi_epi32(x, y)
 #define i32vec_adc(x, y, carry_in, p_carry_out) _mm512_adc_epi32(x, carry_in, y, p_carry_out)
 #define i32vec_sub(x, y) _mm512_sub_epi32(x, y)
 #define i32vec_mask_add(x, y, mask, def) _mm512_mask_add_epi32(def, mask, x, y)
-#define i32vec_mask_mul(x, y, mask, def) _mm512_mask_mul_epi32(def, mask, x, y)
+#define i32vec_mask_mul(x, y, mask, def) _mm512_mask_mullo_epi32(def, mask, x, y)
+#define i32vec_mask_mul_high(x, y, mask, def) _mm512_mask_mulhi_epi32(def, mask, x, y)
 #define i32vec_mask_adc(x, y, mask, carry_in, p_carry_out) _mm512_mask_adc_epi32(x, mask, carry_in, y, p_carry_out) // Resulting vector element falls back to value in x if mask element is not set
 #define i32vec_mask_sub(x, y, mask, def) _mm512_mask_sub_epi32(def, mask, x, y)
 

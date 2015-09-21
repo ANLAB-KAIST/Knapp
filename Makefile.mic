@@ -5,7 +5,8 @@ SRCS   = utils.cc jsoncpp.cc knapp-mic.cc $(wildcard apps/*.cc)
 OBJS = $(SRCS:.cc=.o)
 CC       = icpc 
 #CC       = icpc -std=c++11 -mmic -debug all
-CFLAGS   = -std=c++11 -mmic -Wall -fPIC -DVECTORIZE_IPV4#-DEMPTY_CYCLES ##-g #-I/usr/include#-vec-report5 #-opt-streaming-store always #-S
+CFLAGS   = -std=c++11 -mmic -Wall -fPIC -DVECTORIZE_IPV4 -DVECTORIZE_IPV6
+#-DEMPTY_CYCLES ##-g #-I/usr/include#-vec-report5 #-opt-streaming-store always #-S
 #CFLAGS   = -O3 -std=c++0x -openmp -vec-report5 #-opt-streaming-store always #-S
 #LDFLAGS  = -lnuma
 #LDFLAGS = -debug all -g

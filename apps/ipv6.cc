@@ -12,47 +12,45 @@ static uint64_t ntohll(uint64_t val)
 }
 
 static inline void app_ipv6_vector(struct worker *w) {
+
+#define ETHERNET_ALIGN 2
 	int tid = w->thread_id;
     RoutingTableV6 *table = w->u.ipv6.table;
-	{
-		uintptr_t min_ptr = (uintptr_t)packet[0];
-		i32vec packet_offset;
-		for(int k=0; k<batch_count; k++)
-		{
-			if(  ((uintptr_t)packet[k]) < min_ptr )
-				min_ptr = (uintptr_t)packet[k];
-		}
-		packet_offset = i32vec_set(
-				(uintptr_t)packet[0] - min_ptr,
-				(uintptr_t)packet[1] - min_ptr,
-				(uintptr_t)packet[2] - min_ptr,
-				(uintptr_t)packet[3] - min_ptr,
-				(uintptr_t)packet[4] - min_ptr,
-				(uintptr_t)packet[5] - min_ptr,
-				(uintptr_t)packet[6] - min_ptr,
-				(uintptr_t)packet[7] - min_ptr,
-				(uintptr_t)packet[8] - min_ptr,
-				(uintptr_t)packet[9] - min_ptr,
-				(uintptr_t)packet[10] - min_ptr,
-				(uintptr_t)packet[11] - min_ptr,
-				(uintptr_t)packet[12] - min_ptr,
-				(uintptr_t)packet[13] - min_ptr,
-				(uintptr_t)packet[14] - min_ptr,
-				(uintptr_t)packet[15] - min_ptr);
+    int payload_stride = w->input_stride;
+    int output_stride = w->output_stride;
+    int num_packets = w->num_packets;
+    uint8_t *inputbuf_base = w->inputbuf;
+    uint8_t *outputbuf_base = w->outputbuf;
 
-		uint8_t* packet_base = (uint8_t*)min_ptr;
+
+    const i32vec v_zero = i32vec_set_zero();
+    const i32vec v_one = i32vec_set_all(1);
+    const i32vec const_ETHER_TYPE_IPv6 = i32vec_set_all((int32_t)htons(0x86DD));
+    const i32vec const_6 = i32vec_set_all((int32_t)6);
+    const i32vec const_0xFF = i32vec_set_all((int32_t)0xFF);
+    const i32vec const_IPV6_HASHTABLE_EMPTY = i32vec_set_all((int32_t)IPV6_HASHTABLE_EMPTY);
+    const i32vec packet_offset = i32vec_set_base_st(0, payload_stride);
+    const i32vec route_result_offset = i32vec_set_base_st(0, output_stride);
+
+    const i32vec const_vdrop = i32vec_set_all(DROP);
+    const i32vec const_vslowpath = i32vec_set_all(SLOWPATH);
+    const i32vec const_vcontinue = i32vec_set_all(CONTINUE);
+    const i32vec const_JHASH_GOLDEN_RATIO = i32vec_set_all(JHASH_GOLDEN_RATIO);
+
+    for (int ipacket = 0; ipacket < num_packets; ipacket += NUM_INT32_PER_VECTOR)
+    {
+        int batch_count = MIN(NUM_INT32_PER_VECTOR, num_packets - ipacket);
+        uint8_t *inputbuf = inputbuf_base + (ipacket * payload_stride);
+        uint8_t *outputbuf = outputbuf_base + (ipacket * PER_PACKET_RESULT_SIZE_IPV6);
+
+
+		uint8_t* packet_base = inputbuf;
 
 		//LV0
 		volatile vmask mask_opctrl_lv0 = int2mask( (1 << batch_count) - 1 );
 		//volatile vmask mask_not_drop_current_packet = int2mask( (1 << batch_count) - 1 );
-		volatile i32vec packet_result = i32vec_set_zero();
+		volatile i32vec packet_result = i32vec_set_all(CONTINUE);
 		volatile i32vec output_port = i32vec_set_zero();
-		const i32vec v_zero = i32vec_set_zero();
-		const i32vec v_one = i32vec_set_all(1);
-		const i32vec const_ETHER_TYPE_IPv6 = i32vec_set_all((int32_t)htons(0x86DD));
-		const i32vec const_6 = i32vec_set_all((int32_t)6);
-		const i32vec const_0xFF = i32vec_set_all((int32_t)0xFF);
-		const i32vec const_IPV6_HASHTABLE_EMPTY = i32vec_set_all((int32_t)IPV6_HASHTABLE_EMPTY);
 
 		//for(size_t packet_index = 0; packet_index < batch_count; packet_index++)
 		{
@@ -81,7 +79,7 @@ static inline void app_ipv6_vector(struct worker *w) {
 					//RTE_LOG(DEBUG, ELEM, "CheckIP6Header: invalid packet type - %x\n", ntohs(ethh->ether_type));
 
 					//packet_result = DROP;//return 0;
-					packet_result = i32vec_mask_set(packet_result, mask_opctrl_lv1, DROP);
+					packet_result = i32vec_mask_mov(packet_result, mask_opctrl_lv1, const_vdrop);
 
 					//path_not_drop_current_packet = false;//pkt->kill();
 					mask_opctrl_lv0 = mask_and(mask_opctrl_lv0, mask_not(is_ETHER_TYPE_IPv6));
@@ -94,7 +92,7 @@ static inline void app_ipv6_vector(struct worker *w) {
 				{  // get the first 4 bits.
 
 					//packet_result = SLOWPATH; //return SLOWPATH;
-					packet_result = i32vec_mask_set(packet_result, mask_opctrl_lv1, SLOWPATH);
+					packet_result = i32vec_mask_mov(packet_result, mask_opctrl_lv1, const_vslowpath);
 
 					//path_not_drop_current_packet = false; //pkt->kill();
 					mask_opctrl_lv0 = mask_and(mask_opctrl_lv0, mask_not(is_ip_version_6));
@@ -115,127 +113,46 @@ static inline void app_ipv6_vector(struct worker *w) {
 				i32vec namespace_lookup_lookup_result = i32vec_set_all(0xFFFF);
 
 				namespace_lookup_dest_addr[0] = i32vec_mask_gather(
-						packet_base + sizeof(struct ether_hdr) + offsetof(struct ipv6hdr, daddr) + sizeof(int32_t)*0,
+						packet_base + sizeof(struct ether_hdr) + ETHERNET_ALIGN + offsetof(struct ipv6hdr, daddr) + sizeof(int32_t)*0,
 						packet_offset, mask_opctrl_lv0, v_zero);
 				namespace_lookup_dest_addr[1] = i32vec_mask_gather(
-						packet_base + sizeof(struct ether_hdr) + offsetof(struct ipv6hdr, daddr) + sizeof(int32_t)*1,
+						packet_base + sizeof(struct ether_hdr) + ETHERNET_ALIGN + offsetof(struct ipv6hdr, daddr) + sizeof(int32_t)*1,
 						packet_offset, mask_opctrl_lv0, v_zero);
 				namespace_lookup_dest_addr[2] = i32vec_mask_gather(
-						packet_base + sizeof(struct ether_hdr) + offsetof(struct ipv6hdr, daddr) + sizeof(int32_t)*2,
+						packet_base + sizeof(struct ether_hdr) + ETHERNET_ALIGN + offsetof(struct ipv6hdr, daddr) + sizeof(int32_t)*2,
 						packet_offset, mask_opctrl_lv0, v_zero);
 				namespace_lookup_dest_addr[3] = i32vec_mask_gather(
-						packet_base + sizeof(struct ether_hdr) + offsetof(struct ipv6hdr, daddr) + sizeof(int32_t)*3,
+						packet_base + sizeof(struct ether_hdr) + ETHERNET_ALIGN + offsetof(struct ipv6hdr, daddr) + sizeof(int32_t)*3,
 						packet_offset, mask_opctrl_lv0, v_zero);
 
+				for(int k=0; k<4; k++) //swap byte order
 				{
 					i32vec __byte0;
 					i32vec __byte1;
 					i32vec __byte2;
 					i32vec __byte3;
 
-					__byte0 = i32vec_mask_lrshift_i32(namespace_lookup_dest_addr[0], 24, mask_opctrl_lv0, v_zero);
+					__byte0 = i32vec_mask_lrshift_i32(namespace_lookup_dest_addr[k], 24, mask_opctrl_lv0, v_zero);
 					__byte0 = i32vec_mask_and(__byte0, const_0xFF, mask_opctrl_lv0, v_zero);
 
 
-					__byte1 = i32vec_mask_lrshift_i32(namespace_lookup_dest_addr[0], 16, mask_opctrl_lv0, v_zero);
+					__byte1 = i32vec_mask_lrshift_i32(namespace_lookup_dest_addr[k], 16, mask_opctrl_lv0, v_zero);
 					__byte1 = i32vec_mask_and(__byte1, const_0xFF, mask_opctrl_lv0, v_zero);
 					__byte1 = i32vec_mask_lshift_i32(__byte1, 8, mask_opctrl_lv0, v_zero);
 
-					__byte2 = i32vec_mask_lrshift_i32(namespace_lookup_dest_addr[0], 8, mask_opctrl_lv0, v_zero);
+					__byte2 = i32vec_mask_lrshift_i32(namespace_lookup_dest_addr[k], 8, mask_opctrl_lv0, v_zero);
 					__byte2 = i32vec_mask_and(__byte2, const_0xFF, mask_opctrl_lv0, v_zero);
 					__byte2 = i32vec_mask_lshift_i32(__byte2, 16, mask_opctrl_lv0, v_zero);
 
-					__byte3 = i32vec_mask_and(namespace_lookup_dest_addr[0], const_0xFF, mask_opctrl_lv0, v_zero);
+					__byte3 = i32vec_mask_and(namespace_lookup_dest_addr[k], const_0xFF, mask_opctrl_lv0, v_zero);
 					__byte3 = i32vec_mask_lshift_i32(__byte3, 24, mask_opctrl_lv0, v_zero);
 
-					namespace_lookup_dest_addr[0] = v_zero;
-					namespace_lookup_dest_addr[0] = i32vec_mask_or(namespace_lookup_dest_addr[0], __byte0, mask_opctrl_lv0, v_zero);
-					namespace_lookup_dest_addr[0] = i32vec_mask_or(namespace_lookup_dest_addr[0], __byte1, mask_opctrl_lv0, v_zero);
-					namespace_lookup_dest_addr[0] = i32vec_mask_or(namespace_lookup_dest_addr[0], __byte2, mask_opctrl_lv0, v_zero);
-					namespace_lookup_dest_addr[0] = i32vec_mask_or(namespace_lookup_dest_addr[0], __byte3, mask_opctrl_lv0, v_zero);
+					namespace_lookup_dest_addr[k] = v_zero;
+					namespace_lookup_dest_addr[k] = i32vec_mask_or(namespace_lookup_dest_addr[k], __byte0, mask_opctrl_lv0, v_zero);
+					namespace_lookup_dest_addr[k] = i32vec_mask_or(namespace_lookup_dest_addr[k], __byte1, mask_opctrl_lv0, v_zero);
+					namespace_lookup_dest_addr[k] = i32vec_mask_or(namespace_lookup_dest_addr[k], __byte2, mask_opctrl_lv0, v_zero);
+					namespace_lookup_dest_addr[k] = i32vec_mask_or(namespace_lookup_dest_addr[k], __byte3, mask_opctrl_lv0, v_zero);
 				}
-				{
-					i32vec __byte0;
-					i32vec __byte1;
-					i32vec __byte2;
-					i32vec __byte3;
-
-					__byte0 = i32vec_mask_lrshift_i32(namespace_lookup_dest_addr[1], 24, mask_opctrl_lv0, v_zero);
-					__byte0 = i32vec_mask_and(__byte0, const_0xFF, mask_opctrl_lv0, v_zero);
-
-
-					__byte1 = i32vec_mask_lrshift_i32(namespace_lookup_dest_addr[1], 16, mask_opctrl_lv0, v_zero);
-					__byte1 = i32vec_mask_and(__byte1, const_0xFF, mask_opctrl_lv0, v_zero);
-					__byte1 = i32vec_mask_lshift_i32(__byte1, 8, mask_opctrl_lv0, v_zero);
-
-					__byte2 = i32vec_mask_lrshift_i32(namespace_lookup_dest_addr[1], 8, mask_opctrl_lv0, v_zero);
-					__byte2 = i32vec_mask_and(__byte2, const_0xFF, mask_opctrl_lv0, v_zero);
-					__byte2 = i32vec_mask_lshift_i32(__byte2, 16, mask_opctrl_lv0, v_zero);
-
-					__byte3 = i32vec_mask_and(namespace_lookup_dest_addr[1], const_0xFF, mask_opctrl_lv0, v_zero);
-					__byte3 = i32vec_mask_lshift_i32(__byte3, 24, mask_opctrl_lv0, v_zero);
-
-					namespace_lookup_dest_addr[1] = v_zero;
-					namespace_lookup_dest_addr[1] = i32vec_mask_or(namespace_lookup_dest_addr[1], __byte0, mask_opctrl_lv0, v_zero);
-					namespace_lookup_dest_addr[1] = i32vec_mask_or(namespace_lookup_dest_addr[1], __byte1, mask_opctrl_lv0, v_zero);
-					namespace_lookup_dest_addr[1] = i32vec_mask_or(namespace_lookup_dest_addr[1], __byte2, mask_opctrl_lv0, v_zero);
-					namespace_lookup_dest_addr[1] = i32vec_mask_or(namespace_lookup_dest_addr[1], __byte3, mask_opctrl_lv0, v_zero);
-				}
-				{
-					i32vec __byte0;
-					i32vec __byte1;
-					i32vec __byte2;
-					i32vec __byte3;
-
-					__byte0 = i32vec_mask_lrshift_i32(namespace_lookup_dest_addr[2], 24, mask_opctrl_lv0, v_zero);
-					__byte0 = i32vec_mask_and(__byte0, const_0xFF, mask_opctrl_lv0, v_zero);
-
-
-					__byte1 = i32vec_mask_lrshift_i32(namespace_lookup_dest_addr[2], 16, mask_opctrl_lv0, v_zero);
-					__byte1 = i32vec_mask_and(__byte1, const_0xFF, mask_opctrl_lv0, v_zero);
-					__byte1 = i32vec_mask_lshift_i32(__byte1, 8, mask_opctrl_lv0, v_zero);
-
-					__byte2 = i32vec_mask_lrshift_i32(namespace_lookup_dest_addr[2], 8, mask_opctrl_lv0, v_zero);
-					__byte2 = i32vec_mask_and(__byte2, const_0xFF, mask_opctrl_lv0, v_zero);
-					__byte2 = i32vec_mask_lshift_i32(__byte2, 16, mask_opctrl_lv0, v_zero);
-
-					__byte3 = i32vec_mask_and(namespace_lookup_dest_addr[2], const_0xFF, mask_opctrl_lv0, v_zero);
-					__byte3 = i32vec_mask_lshift_i32(__byte3, 24, mask_opctrl_lv0, v_zero);
-
-					namespace_lookup_dest_addr[2] = v_zero;
-					namespace_lookup_dest_addr[2] = i32vec_mask_or(namespace_lookup_dest_addr[2], __byte0, mask_opctrl_lv0, v_zero);
-					namespace_lookup_dest_addr[2] = i32vec_mask_or(namespace_lookup_dest_addr[2], __byte1, mask_opctrl_lv0, v_zero);
-					namespace_lookup_dest_addr[2] = i32vec_mask_or(namespace_lookup_dest_addr[2], __byte2, mask_opctrl_lv0, v_zero);
-					namespace_lookup_dest_addr[2] = i32vec_mask_or(namespace_lookup_dest_addr[2], __byte3, mask_opctrl_lv0, v_zero);
-				}
-				{
-					i32vec __byte0;
-					i32vec __byte1;
-					i32vec __byte2;
-					i32vec __byte3;
-
-					__byte0 = i32vec_mask_lrshift_i32(namespace_lookup_dest_addr[3], 24, mask_opctrl_lv0, v_zero);
-					__byte0 = i32vec_mask_and(__byte0, const_0xFF, mask_opctrl_lv0, v_zero);
-
-
-					__byte1 = i32vec_mask_lrshift_i32(namespace_lookup_dest_addr[3], 16, mask_opctrl_lv0, v_zero);
-					__byte1 = i32vec_mask_and(__byte1, const_0xFF, mask_opctrl_lv0, v_zero);
-					__byte1 = i32vec_mask_lshift_i32(__byte1, 8, mask_opctrl_lv0, v_zero);
-
-					__byte2 = i32vec_mask_lrshift_i32(namespace_lookup_dest_addr[3], 8, mask_opctrl_lv0, v_zero);
-					__byte2 = i32vec_mask_and(__byte2, const_0xFF, mask_opctrl_lv0, v_zero);
-					__byte2 = i32vec_mask_lshift_i32(__byte2, 16, mask_opctrl_lv0, v_zero);
-
-					__byte3 = i32vec_mask_and(namespace_lookup_dest_addr[3], const_0xFF, mask_opctrl_lv0, v_zero);
-					__byte3 = i32vec_mask_lshift_i32(__byte3, 24, mask_opctrl_lv0, v_zero);
-
-					namespace_lookup_dest_addr[3] = v_zero;
-					namespace_lookup_dest_addr[3] = i32vec_mask_or(namespace_lookup_dest_addr[3], __byte0, mask_opctrl_lv0, v_zero);
-					namespace_lookup_dest_addr[3] = i32vec_mask_or(namespace_lookup_dest_addr[3], __byte1, mask_opctrl_lv0, v_zero);
-					namespace_lookup_dest_addr[3] = i32vec_mask_or(namespace_lookup_dest_addr[3], __byte2, mask_opctrl_lv0, v_zero);
-					namespace_lookup_dest_addr[3] = i32vec_mask_or(namespace_lookup_dest_addr[3], __byte3, mask_opctrl_lv0, v_zero);
-				}
-
 
 
 				//namespace_lookup_lookup_result = table->lookup(namespace_lookup_dest_addr);
@@ -321,8 +238,7 @@ static inline void app_ipv6_vector(struct worker *w) {
 
 				    		vmask to_be_cleared = mask_not(mask_for_loop_lv1);
 				    		ns_loopv1_masked_addr[k] =
-				    				i32vec_mask_set(ns_loopv1_masked_addr[k], to_be_cleared, 0);
-
+				    				i32vec_mask_mov(ns_loopv1_masked_addr[k], to_be_cleared, v_zero);
 				    		//once shifted, no more process
 				    		mask_for_loop_lv1 = mask_and(mask_for_loop_lv1, mask_not(exceeded));
 				    	}
@@ -338,7 +254,8 @@ static inline void app_ipv6_vector(struct worker *w) {
 				    			i32vec __HASH_a,__HASH_b, __HASH_c;
 
 				    			//a = b = JHASH_GOLDEN_RATIO;
-				    			__HASH_a = __HASH_b = i32vec_mask_set(v_zero, mask_loop_lv1, JHASH_GOLDEN_RATIO);
+				    			//__HASH_a = __HASH_b = i32vec_mask_mov(v_zero, mask_loop_lv1, const_JHASH_GOLDEN_RATIO);
+				    			__HASH_a = __HASH_b = i32vec_set_all(JHASH_GOLDEN_RATIO);
 				    			__HASH_c = v_zero;
 
 
@@ -456,10 +373,8 @@ static inline void app_ipv6_vector(struct worker *w) {
 				                //mask_if_lv1_br_false
 				                {
 				                    //index = m_Table[index].next;
-				                	i32vec __temp_ns_find_index = i32vec_mask_set(ns_find_index, mask_if_lv1_br_false, 0);
-				                	ns_find_index = i32vec_mask_or(
-				                			__temp_ns_find_index, m_table_next,
-											mask_if_lv1_br_false, ns_find_index);
+				                	ns_find_index = i32vec_mask_mov(
+				                			ns_find_index, mask_if_lv1_br_false, m_table_next);
 
 
 				                    //while (index != 0)
@@ -519,10 +434,7 @@ static inline void app_ipv6_vector(struct worker *w) {
 
 
 							    		//index = m_Table[index].next;
-							    		i32vec __temp_ns_find_index = i32vec_mask_set(ns_find_index, mask_loop_lv2, 0);
-							    		ns_find_index = i32vec_mask_or(
-							    				__temp_ns_find_index, m_table_next,
-												mask_loop_lv2, ns_find_index);
+							    		ns_find_index = i32vec_mask_mov(ns_find_index, mask_loop_lv2, m_table_next);
 				                    }
 				                }
 				            }
@@ -551,11 +463,8 @@ static inline void app_ipv6_vector(struct worker *w) {
 				        //mask_loop_lv1_iffalse
 				        {
 				            //result = temp; //ns_find_result
-				        	i32vec __temp_result = i32vec_mask_set(
-				        			namespace_lookup_lookup_result, mask_loop_lv1_iffalse, 0);
-				        	namespace_lookup_lookup_result = i32vec_mask_or(
-				        			__temp_result, ns_find_result,
-									mask_loop_lv1_iffalse, namespace_lookup_lookup_result);
+				        	namespace_lookup_lookup_result = i32vec_mask_mov(
+				        			namespace_lookup_lookup_result, mask_loop_lv1_iffalse, ns_find_result);
 
 
 				            //start = len + 1;
@@ -588,7 +497,7 @@ static inline void app_ipv6_vector(struct worker *w) {
 				{
 					/* Could not find destination. Use the second output for "error" packets. */
 					//packet_result = DROP;//return 0;
-					packet_result = i32vec_mask_set(packet_result, mask_lookup_valid, DROP);
+					packet_result = i32vec_mask_mov(packet_result, mask_lookup_valid, const_vdrop);
 
 					//path_not_drop_current_packet = false; //pkt->kill();
 					mask_opctrl_lv0 = mask_and(mask_opctrl_lv0, mask_not(mask_lookup_valid));
@@ -604,7 +513,7 @@ static inline void app_ipv6_vector(struct worker *w) {
 			//namespace_decl_
 			{
 				i32vec ip_hop_limit = i32vec_mask_gather_u8(
-						packet_base + offsetof(struct ipv6hdr, hop_limit) + sizeof(struct ether_hdr),
+						packet_base + offsetof(struct ipv6hdr, hop_limit) + sizeof(struct ether_hdr) + ETHERNET_ALIGN,
 						packet_offset, mask_opctrl_lv0, v_zero);//iph->hop_limit
 
 				vmask mask_hop_limit = i32vec_mask_le(
@@ -615,7 +524,7 @@ static inline void app_ipv6_vector(struct worker *w) {
 				{
 					/* Could not find destination. Use the second output for "error" packets. */
 					//packet_result = DROP;//return 0;
-					packet_result = i32vec_mask_set(packet_result, mask_hop_limit, DROP);
+					packet_result = i32vec_mask_mov(packet_result, mask_hop_limit, const_vdrop);
 
 					//path_not_drop_current_packet = false; //pkt->kill();
 					mask_opctrl_lv0 = mask_and(mask_opctrl_lv0, mask_not(mask_hop_limit));
@@ -629,7 +538,7 @@ static inline void app_ipv6_vector(struct worker *w) {
 
 				//write to packet
 				i32vec_mask_scatter_u8_nt(
-						packet_base + offsetof(struct ipv6hdr, hop_limit) + sizeof(struct ether_hdr),
+						packet_base + offsetof(struct ipv6hdr, hop_limit) + sizeof(struct ether_hdr) + ETHERNET_ALIGN,
 						packet_offset, ip_hop_limit, mask_opctrl_lv0);//iph->hop_limit
 
 				//output(0).push(pkt);
@@ -651,7 +560,8 @@ static inline void app_ipv6_vector(struct worker *w) {
 				//if (0x01 & ethh->d_addr[0])
 				{
 					//path_not_drop_current_packet = false; //pkt->kill();
-					packet_result = i32vec_mask_set(packet_result, is_multicast, DROP);
+					packet_result = i32vec_mask_mov(packet_result, is_multicast, const_vdrop);
+
 					mask_opctrl_lv0 = mask_and(mask_opctrl_lv0, mask_not(is_multicast));
 				}
 				//packet_result = 0;
@@ -659,14 +569,19 @@ static inline void app_ipv6_vector(struct worker *w) {
 			}
 
 			//this->output_port_vec[packet_index] = output_port;
+			/*
 			i32vec_scatter_nt(
-					(void*)this->output_port_vec,
-					i32vec_set(0,4,8,12,16,20,24,28,32,36,40,44,48,52,56,60),
+					outputbuf,
+					route_result_offset,
 					output_port);
+					*/
+
+
 			i32vec_scatter_nt(
-					(void*)this->packet_result_vec,
-					i32vec_set(0,4,8,12,16,20,24,28,32,36,40,44,48,52,56,60),
+					outputbuf,
+					route_result_offset,
 					packet_result);
+
 			//this->packet_result_vec[packet_index] = packet_result;
 		}
 
@@ -698,12 +613,14 @@ static inline void app_ipv6_serial(struct worker *w) {
 		if (lookup_result == 0xffff)
 			/* Could not find destination. Use the second output for "error" packets. */
 			result = DROP;
+		else
+			result = CONTINUE;
 
 		//rr_port = (rr_port + 1) % num_tx_ports;
 		//anno_set(&pkt->anno, NBA_ANNO_IFACE_OUT, rr_port);
    
    
-        *((int32_t *)(w->outputbuf + (PER_PACKET_RESULT_SIZE_IPV4 * ipacket))) = result;
+        *((int32_t *)(w->outputbuf + (PER_PACKET_RESULT_SIZE_IPV6 * ipacket))) = result;
     }
 }
 
