@@ -2,6 +2,11 @@
 #include <cstdlib>
 #include <memory.h>
 #include "../libvec.hh"
+#include "../utils.hh"
+
+#define printmask(x) if (1) fprintf(stderr, #x": %04x\n", x)
+#define pre(v) ((int32_t *) &v)
+#define printvec(x) if (1) fprintf(stderr, #x": %d %d %d %d, %d %d %d %d, %d %d %d %d, %d %d %d %d\n", pre(x)[0], pre(x)[1], pre(x)[2], pre(x)[3], pre(x)[4], pre(x)[5], pre(x)[6], pre(x)[7], pre(x)[8], pre(x)[9], pre(x)[10], pre(x)[11], pre(x)[12], pre(x)[13], pre(x)[14], pre(x)[15])
 
 static uint64_t ntohll(uint64_t val)
 {
@@ -47,6 +52,7 @@ static inline void app_ipv6_vector(struct worker *w) {
 		uint8_t* packet_base = inputbuf;
 
 		//LV0
+		volatile vmask mask_given_packets = int2mask( (1 << batch_count) - 1 );
 		volatile vmask mask_opctrl_lv0 = int2mask( (1 << batch_count) - 1 );
 		//volatile vmask mask_not_drop_current_packet = int2mask( (1 << batch_count) - 1 );
 		volatile i32vec packet_result = i32vec_set_all(CONTINUE);
@@ -576,17 +582,22 @@ static inline void app_ipv6_vector(struct worker *w) {
 					output_port);
 					*/
 
+			//printvec(packet_result);
+			//printvec(route_result_offset);
 
-			i32vec_scatter_nt(
+			i32vec_mask_scatter_nt(
 					outputbuf,
 					route_result_offset,
-					packet_result);
+					packet_result, mask_given_packets);
+
+//			for(int k=0; k<batch_count; k++)
+//				*((int32_t*)(outputbuf + 4*k)) = CONTINUE;
+
 
 			//this->packet_result_vec[packet_index] = packet_result;
 		}
 
 		//return 0;
-		return;
 	}
 	
 }
