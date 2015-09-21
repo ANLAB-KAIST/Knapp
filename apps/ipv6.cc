@@ -42,6 +42,9 @@ static inline void app_ipv6_vector(struct worker *w) {
     const i32vec const_vcontinue = i32vec_set_all(CONTINUE);
     const i32vec const_JHASH_GOLDEN_RATIO = i32vec_set_all(JHASH_GOLDEN_RATIO);
 
+    //XXX m_TableSize must be power of two IPV6_DEFAULT_HASHTABLE_SIZE
+    const i32vec const_TABLE_MOD_MASK = i32vec_set_all(IPV6_DEFAULT_HASHTABLE_SIZE-1);
+
     for (int ipacket = 0; ipacket < num_packets; ipacket += NUM_INT32_PER_VECTOR)
     {
         int batch_count = MIN(NUM_INT32_PER_VECTOR, num_packets - ipacket);
@@ -69,6 +72,12 @@ static inline void app_ipv6_vector(struct worker *w) {
 					packet_offset,
 					mask_opctrl_lv0,
 					v_zero);//ethh->ether_type
+			i32vec ip_version = i32vec_mask_gather_u8(
+					packet_base + sizeof(struct ether_hdr) + ETHERNET_ALIGN,
+					packet_offset,
+					mask_opctrl_lv0,
+					v_zero);//ethh->ether_type
+			ip_version = i32vec_mask_lrshift_i32(ip_version, 4, mask_opctrl_lv0, v_zero);
 
 			//namespace_checkheader_
 			{
@@ -92,16 +101,19 @@ static inline void app_ipv6_vector(struct worker *w) {
 				}
 
 				//if (iph->version != 6)
-				vmask is_ip_version_6 =
-						i32vec_mask_ne(eth_ether_type, const_6, mask_opctrl_lv0);
-				mask_opctrl_lv1 = mask_and(mask_opctrl_lv0, is_ip_version_6);
+				vmask not_ip_version_6 =
+						i32vec_mask_ne(ip_version, const_6, mask_opctrl_lv0);
+				mask_opctrl_lv1 = mask_and(mask_opctrl_lv0, not_ip_version_6);
 				{  // get the first 4 bits.
 
 					//packet_result = SLOWPATH; //return SLOWPATH;
+					//printvec(ip_version); //OK
+					//printmask(not_ip_version_6); //OK
+					//printmask(mask_opctrl_lv1); //OK
 					packet_result = i32vec_mask_mov(packet_result, mask_opctrl_lv1, const_vslowpath);
 
 					//path_not_drop_current_packet = false; //pkt->kill();
-					mask_opctrl_lv0 = mask_and(mask_opctrl_lv0, mask_not(is_ip_version_6));
+					mask_opctrl_lv0 = mask_and(mask_opctrl_lv0, mask_not(not_ip_version_6));
 				}
 
 				// TODO: Discard illegal source addresses.
@@ -160,7 +172,6 @@ static inline void app_ipv6_vector(struct worker *w) {
 					namespace_lookup_dest_addr[k] = i32vec_mask_or(namespace_lookup_dest_addr[k], __byte3, mask_opctrl_lv0, v_zero);
 				}
 
-
 				//namespace_lookup_lookup_result = table->lookup(namespace_lookup_dest_addr);
 				{
 				    // Note: lookup() method is also called from build().
@@ -175,15 +186,18 @@ static inline void app_ipv6_vector(struct worker *w) {
 				    //loop_lv1
 				    vmask mask_loop_lv1 = mask_opctrl_lv0;
 
+				    i32vec ns_loop_lv1_len = v_zero;
 				    while(1) //label_loop_lv1
 				    {
-				    	i32vec ns_loop_lv1_len = i32vec_mask_add(
-				    			ns_table_lookup_start, ns_table_lookup_end,
-								mask_loop_lv1, v_zero);
+				    	//printvec(ns_table_lookup_start);
+				    	//printvec(ns_table_lookup_end);
 				    	ns_loop_lv1_len = i32vec_mask_lrshift_i32(
-				    			ns_loop_lv1_len, 1,
-								mask_loop_lv1, v_zero);
+				    			i32vec_mask_add(
+				    					ns_table_lookup_start, ns_table_lookup_end,
+										mask_loop_lv1, v_zero),
+										1, mask_loop_lv1, ns_loop_lv1_len);
 				    	//int len = (start + end) / 2;
+				    	//printvec(ns_loop_lv1_len);
 
 
 						//mask(ip, len+1)
@@ -289,6 +303,8 @@ static inline void app_ipv6_vector(struct worker *w) {
 				    		    //return c;
 				    		    ns_find_index = __HASH_c;
 				    		}
+				    		ns_find_index = i32vec_mask_and(ns_find_index, const_TABLE_MOD_MASK,
+				    				mask_loop_lv1, v_zero);
 
 
 				            //uint16_t buf[2] = {0,0};
@@ -312,20 +328,31 @@ static inline void app_ipv6_vector(struct worker *w) {
 				    		i32vec m_table_state;
 				    		i32vec m_table_next;
 
+				    		i32vec __mult1 = i32vec_mask_mul(
+		    						i32vec_set_all(sizeof(HashTable128)),
+									ns_loop_lv1_len, mask_loop_lv1,v_zero
+		    						);
+				    		i32vec __mult2 = i32vec_mask_mul(
+									i32vec_set_all(sizeof(Item)),
+									ns_find_index, mask_loop_lv1, v_zero
+									);
+
 				    		i32vec offset_len_index = i32vec_mask_add(
-				    				i32vec_mask_mul(
-				    						i32vec_set_all(sizeof(HashTable128)),
-											ns_loop_lv1_len, mask_loop_lv1,v_zero
-				    						),
-									i32vec_mask_mul(
-											i32vec_set_all(sizeof(Item)),
-											ns_find_index, mask_loop_lv1, v_zero
-											),
+				    				__mult1,
+									__mult2,
 				    				mask_loop_lv1, v_zero
 				    				);
+				    		//printf("%llu %llu\n", sizeof(HashTable128), sizeof(Item));
+				    		//printvec(ns_loop_lv1_len);
+				    		//printvec(ns_find_index);
+				    		//printvec(__mult1);
+				    		//printvec(__mult2);
+				    		//printvec(offset_len_index);
+				    		break;
 
 				    		//calculate index
 				    		{
+				    			//printvec(offset_len_index);
 				    			m_table_key[0] = i32vec_mask_gather(key_base_ptr + sizeof(int32_t)*0, offset_len_index, mask_loop_lv1, v_zero);
 				    			m_table_key[1] = i32vec_mask_gather(key_base_ptr + sizeof(int32_t)*1, offset_len_index, mask_loop_lv1, v_zero);
 				    			m_table_key[2] = i32vec_mask_gather(key_base_ptr + sizeof(int32_t)*2, offset_len_index, mask_loop_lv1, v_zero);
@@ -584,7 +611,6 @@ static inline void app_ipv6_vector(struct worker *w) {
 
 			//printvec(packet_result);
 			//printvec(route_result_offset);
-
 			i32vec_mask_scatter_nt(
 					outputbuf,
 					route_result_offset,
