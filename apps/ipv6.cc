@@ -692,25 +692,84 @@ static inline void app_ipv6_serial(struct worker *w) {
         pktprocess_result_t result = CONTINUE;
         uint8_t *inputbuf = w->inputbuf + (ipacket * w->input_stride);
         struct ether_hdr *ethh = (struct ether_hdr *) inputbuf;
-        struct ipv6hdr *ip6h = (struct ipv6hdr *)(((uint8_t *)(struct ipv6hdr *)(ethh + 1)) + 2);
+        struct ipv6hdr *iph = (struct ipv6hdr *)(((uint8_t *)(struct ipv6hdr *)(ethh + 1)) + 2);
+
+        //int CheckIP6Header::process(int input_port, Packet *pkt)
+        {
+            //struct ether_hdr *ethh = (struct ether_hdr *) pkt->data();
+            //struct ip6_hdr *iph = (struct ip6_hdr *)(ethh + 1);
+
+            // Validate the packet header.
+            if (ntohs(ethh->ether_type) != ETHER_TYPE_IPv6) {
+                //RTE_LOG(DEBUG, ELEM, "CheckIP6Header: invalid packet type - %x\n", ntohs(ethh->ether_type));
+                //pkt->kill();
+                //return 0;
+            	result = DROP;
+            }
+
+            if (iph->version != 6) {  // get the first 4 bits.
+                //pkt->kill();
+                //return SLOWPATH;
+            	result = SLOWPATH;
+            }
+
+            // TODO: Discard illegal source addresses.
+            //output(0).push(pkt);
+            //return 0; // output port number: 0
+        }
 		
-		uint128_t dest_addr;
-		uint16_t lookup_result = 0xffff;
-		dest_addr.u64[1] = ip6h->daddr.u64[0];
-		dest_addr.u64[0] = ip6h->daddr.u64[1];
-		dest_addr.u64[1] = ntohll(dest_addr.u64[1]);
-		dest_addr.u64[0] = ntohll(dest_addr.u64[0]);
+        //int LookupIP6Route::process(int input_port, Packet *pkt)
+        if(result == CONTINUE)
+        {
+        	uint128_t dest_addr;
+        	uint16_t lookup_result = 0xffff;
+        	dest_addr.u64[1] = iph->daddr.u64[0];
+        	dest_addr.u64[0] = iph->daddr.u64[1];
+        	dest_addr.u64[1] = ntohll(dest_addr.u64[1]);
+        	dest_addr.u64[0] = ntohll(dest_addr.u64[0]);
 
-		lookup_result = table->lookup(dest_addr);
+        	lookup_result = table->lookup(dest_addr);
 
-		if (lookup_result == 0xffff)
-			/* Could not find destination. Use the second output for "error" packets. */
-			result = DROP;
-		else
-			result = CONTINUE;
+        	if (lookup_result == 0xffff)
+        		/* Could not find destination. Use the second output for "error" packets. */
+        		result = DROP;
+        	else
+        		result = CONTINUE;
+        }
 
 		//rr_port = (rr_port + 1) % num_tx_ports;
 		//anno_set(&pkt->anno, NBA_ANNO_IFACE_OUT, rr_port);
+
+        //int DecIP6HLIM::process(int input_port, Packet *pkt)
+        if(result == CONTINUE)
+        {
+            //struct ether_hdr *ethh = (struct ether_hdr *) pkt->data();
+            //struct ip6_hdr *iph    = (struct ip6_hdr *)(ethh + 1);
+            //uint32_t checksum;
+
+            if (iph->hop_limit <= 1) {
+                //pkt->kill();
+                //return 0;
+            	result = DROP;
+            }
+
+            // Decrement TTL.
+            iph->hop_limit--;
+
+            //output(0).push(pkt);
+            //return 0;
+        }
+
+        //int DropBroadcasts::process(int input_port, Packet *pkt)
+        if(result == CONTINUE)
+        {
+            //struct ether_hdr *ethh = (struct ether_hdr *) pkt->data();
+            if (is_unicast_ether_addr(&ethh->d_addr))
+            	result = CONTINUE;//output(0).push(pkt);
+            else
+            	result = DROP;//pkt->kill();
+            //return 0;
+        }
    
    
         *((int32_t *)(w->outputbuf + (PER_PACKET_RESULT_SIZE_IPV6 * ipacket))) = result;
